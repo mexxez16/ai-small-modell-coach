@@ -62,7 +62,21 @@ impl WorkerRegistry {
     pub fn list(&self) -> Vec<RenderWorker> {
         self.inner.read().unwrap().values().cloned().collect()
     }
+
+    pub fn get(&self, id: &str) -> Option<RenderWorker> {
+        self.inner.read().unwrap().get(id).cloned()
+    }
+
+    pub fn update_status(&self, id: &str, status: RenderWorkerStatus) {
+        if let Some(worker) = self.inner.write().unwrap().get_mut(id) {
+            if worker.status != status {
+                worker.status = status;
+            }
+        }
+    }
 }
+
+use coach_core::model::WorkerStatus as RenderWorkerStatus;
 
 /// Global application state handed to all axum handlers.
 #[derive(Clone)]
@@ -71,6 +85,11 @@ pub struct AppState {
     /// In-memory store in the scaffold; swapped for the Parquet/DuckDB
     /// backend behind a feature later on.
     pub storage: Arc<dyn Storage>,
+    /// Dirty flag for snapshot writer.
+    dirty: Arc<std::sync::Mutex<bool>>,
+    /// Directory the storage snapshots persist to (COACH_DATA_DIR); `None`
+    /// keeps the purely in-memory scaffold behavior.
+    pub snapshot_dir: Option<std::path::PathBuf>,
     pub workers: Arc<WorkerRegistry>,
     /// Chat provider configs, persisted in `<data_dir>/providers.json`.
     pub provider_store: Arc<crate::providers::ProviderStore>,
@@ -89,13 +108,50 @@ impl AppState {
         let workspace_dir = std::env::var("COACH_WORKSPACE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // Create the data dir so snapshots + providers land there even on a
+        // completely fresh COACH_DATA_DIR.
+        let _ = std::fs::create_dir_all(&data_dir);
+        let store = InMemoryStore::new();
+        // Survive restarts: reload a previous snapshot when present. Missing
+        // files are treated as an empty store (fresh install).
+        if let Err(err) = store.load_from_dir(&data_dir) {
+            eprintln!("snapshot load failed: {err:#}");
+        }
+        let store: Arc<dyn Storage> = Arc::new(store);
         AppState {
             config,
-            storage: Arc::new(InMemoryStore::new()),
+            storage: store,
+            dirty: Arc::new(std::sync::Mutex::new(false)),
+            snapshot_dir: Some(data_dir.clone()),
             workers: Arc::new(WorkerRegistry::default()),
             provider_store: Arc::new(crate::providers::ProviderStore::load(&data_dir)),
             http_client: reqwest::Client::new(),
             workspace_dir,
         }
+    }
+
+    /// Persist the full store into the snapshot dir (best-effort).
+    pub fn persist_snapshot(&self) {
+        eprintln!("persist_snapshot invoked");
+        if let Some(dir) = self.snapshot_dir.as_ref() {
+            if let Err(err) = self.storage.snapshot_to_dir(dir) {
+                eprintln!("snapshot failed: {err:#}");
+            }
+        }
+    }
+
+    /// Whether a mutation happened since the last snapshot.
+    pub fn snapshot_dirty(&self) -> bool {
+        *self.dirty.lock().unwrap()
+    }
+
+    /// Reset the snapshot dirty flag.
+    pub fn clear_dirty(&self) {
+        *self.dirty.lock().unwrap() = false;
+    }
+
+    /// Flag the store as mutated so the snapshot writer persists it.
+    pub fn mark_dirty(&self) {
+        *self.dirty.lock().unwrap() = true;
     }
 }

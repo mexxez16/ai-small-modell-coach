@@ -29,7 +29,9 @@ pub async fn spawn_worker(
     State(state): State<AppState>,
     Json(body): Json<SpawnWorkerRequest>,
 ) -> Result<Json<SpawnWorkerResponse>, ApiError> {
-    let port = body.port.unwrap_or(0); // 0 = let the worker bind to a free port
+    // Pre-allocate a free TCP port so the worker never races other listeners
+    // and the registry knows the authoritative address up front.
+    let port = body.port.unwrap_or_else(free_tcp_port);
     let id = new_id();
 
     // Spawn managed by the OS so the process outlives handler scope; the API
@@ -55,6 +57,7 @@ pub async fn spawn_worker(
     } else {
         WorkerStatus::Stopped
     };
+    let _ = &status;
     let worker = RenderWorker {
         id: id.clone(),
         model_path: body.model_path,
@@ -83,9 +86,11 @@ pub async fn worker_health(
         .into_iter()
         .find(|w| w.id == id)
         .ok_or(coach_core::CoreError::NotFound(format!("worker {id}")))?;
-    // Liveness probe of the worker's /health endpoint lands with the
-    // render-worker feature; scaffold reports the recorded status.
-    Ok(Json(serde_json::json!({"id": id, "status": worker.status})))
+    let healthy = probe_worker(state.http_client.clone(), &format!("http://127.0.0.1:{}/health", worker.port)).await;
+    if healthy {
+        state.workers.update_status(&id, WorkerStatus::Ready);
+    }
+    Ok(Json(serde_json::json!({"id": id, "status": worker.status, "healthy": healthy})))
 }
 
 #[utoipa::path(delete, path = "/api/workers/{id}", responses((status = 204)))]
@@ -119,4 +124,94 @@ unsafe fn libc_kill_term(pid: u32) -> i32 {
 #[cfg(not(unix))]
 unsafe fn libc_kill_term(_pid: u32) -> i32 {
     -1
+}
+
+
+
+/// Proxy a render request to the worker process (`POST /api/visualize`).
+/// Keeps the browser decoupled from worker addressing; request bodies are
+/// forwarded as-is, response size is capped.
+#[utoipa::path(post, path = "/api/visualize", request_body = serde_json::Value, responses((status = 200, body = serde_json::Value)))]
+pub async fn visualize_proxy(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use serde_json::json;
+
+    // Resolve the target worker: explicit id, else the first Ready/Starting.
+    let worker = if let Some(id) = body.get("worker_id").and_then(|v| v.as_str()) {
+        state.workers.list().into_iter().find(|w| w.id == id)
+    } else {
+        state
+            .workers
+            .list()
+            .into_iter()
+            .find(|w| w.port != 0)
+    }
+    .ok_or(coach_core::CoreError::NotFound("no render worker registered".into()))?;
+
+    let url = format!("http://127.0.0.1:{}/render", worker.port);
+    let forward = json!({
+        "text": body.get("text").and_then(|v| v.as_str()).unwrap_or(""),
+        "style": body.get("style").and_then(|v| v.as_str()).unwrap_or("ent"),
+        "options": body.get("options").cloned().unwrap_or(serde_json::Value::Object(Default::default())),
+        "sentence_split": body.get("sentence_split").and_then(|v| v.as_bool()).unwrap_or(false),
+    });
+
+    let response = state
+        .http_client
+        .post(url)
+        .json(&forward)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| ApiError(coach_core::CoreError::NotImplemented(format!("render worker unreachable: {e}"))))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(ApiError(coach_core::CoreError::NotImplemented(format!(
+            "render worker {status}: {}",
+            detail.chars().take(300).collect::<String>()
+        ))));
+    }
+
+    // Byte-bound guard before returning.
+    let text = response
+        .text()
+        .await
+        .map_err(|e| ApiError(coach_core::CoreError::Serialization(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::Other, e)))))?;
+    if text.len() > 5 * 1024 * 1024 {
+        return Err(ApiError(coach_core::CoreError::Conflict(
+            "render worker response too large".into(),
+        )));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|_| json!({"svg": text, "meta": {}}));
+    Ok(Json(parsed))
+}
+
+
+
+/// Allocate a free TCP port by asking the OS for an ephemeral bind, then
+/// dropping the listener. Small TOCTOU window; workers retry elsewhere.
+fn free_tcp_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr().map(|a| a.port()))
+        .unwrap_or(0)
+}
+
+
+/// Probe the worker's `/health` endpoint with a short timeout.
+async fn probe_worker(
+    client: reqwest::Client,
+    url: &str,
+) -> bool {
+    client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }

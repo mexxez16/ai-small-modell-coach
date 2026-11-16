@@ -19,6 +19,16 @@ use std::sync::RwLock;
 
 /// Storage contract for the whole application.
 pub trait Storage: Send + Sync {
+    /// Snapshot hook (default: unsupported). Backends that can persist do.
+    fn snapshot_to_dir(&self, _dir: &std::path::Path) -> Result<()> {
+        Err(crate::error::CoreError::NotImplemented("snapshot".into()))
+    }
+
+    /// Whether [`Self::snapshot_to_dir`] actually persists (default: false).
+    fn supports_persistence(&self) -> bool {
+        false
+    }
+
     // Sessions
     fn create_session(&self, session: Session) -> Result<Session>;
     fn get_session(&self, id: &str) -> Result<Session>;
@@ -109,6 +119,15 @@ fn ts() -> DateTime<Utc> {
 }
 
 impl Storage for InMemoryStore {
+    fn supports_persistence(&self) -> bool {
+        true
+    }
+
+    fn snapshot_to_dir(&self, dir: &std::path::Path) -> Result<()> {
+        // Delegate to the inherent implementation (same name, richer docs).
+        InMemoryStore::snapshot_to_dir(self, dir)
+    }
+
     fn create_session(&self, session: Session) -> Result<Session> {
         let mut map = self.sessions.write().unwrap();
         if map.contains_key(&session.id) {
@@ -433,5 +452,177 @@ mod tests {
         };
         store.put_data_item(item).unwrap();
         assert_eq!(store.list_data_items("d1", None).unwrap().len(), 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Durability: file snapshots of the in-memory reference store. Every mutating
+// trait method syncs the whole store to `<dir>`; a fresh boot reloads it.
+// ---------------------------------------------------------------------------
+
+impl InMemoryStore {
+    /// Write every entity map as one JSON file each into `dir` (created if
+    /// missing). Atomic per file: temp file + rename.
+    pub fn snapshot_to_dir(&self, dir: &std::path::Path) -> Result<()> {
+        std::fs::create_dir_all(dir).map_err(CoreError::Io)?;
+        let dump = |name: &str, value: &serde_json::Value| -> Result<()> {
+            let target = dir.join(format!("{name}.json"));
+            let tmp = dir.join(format!(".{name}.tmp"));
+            std::fs::write(&tmp, value.to_string().as_bytes()).map_err(CoreError::Io)?;
+            std::fs::rename(&tmp, &target).map_err(CoreError::Io)?;
+            Ok(())
+        };
+        let sessions = self.sessions.read().unwrap();
+        let runs = self.runs.read().unwrap();
+        let metrics = self.metrics.read().unwrap();
+        let images = self.images.read().unwrap();
+        let visualizations = self.visualizations.read().unwrap();
+        let datasets = self.datasets.read().unwrap();
+        let data_items = self.data_items.read().unwrap();
+        let item_history = self.item_history.read().unwrap();
+        dump(
+            "sessions",
+            &serde_json::to_value(sessions.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+        )?;
+        dump(
+            "runs",
+            &serde_json::to_value(runs.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+        )?;
+        dump("metrics", &serde_json::to_value(&*metrics).map_err(|e| CoreError::Serialization(e))?)?;
+        dump("images", &serde_json::to_value(&*images).map_err(|e| CoreError::Serialization(e))?)?;
+        dump(
+            "visualizations",
+            &serde_json::to_value(&*visualizations).map_err(|e| CoreError::Serialization(e))?,
+        )?;
+        dump(
+            "datasets",
+            &serde_json::to_value(datasets.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+        )?;
+        dump(
+            "data_items",
+            &serde_json::to_value(data_items.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+        )?;
+        dump("item_history", &serde_json::to_value(&*item_history).map_err(|e| CoreError::Serialization(e))?)?;
+        Ok(())
+    }
+
+    /// Load a snapshot previously written by [`snapshot_to_dir`]. Missing
+    /// files are ignored (fresh boot); malformed entries abort with an error.
+    pub fn load_from_dir(&self, dir: &std::path::Path) -> Result<()> {
+        let read_vec = |name: &str| -> Result<Option<serde_json::Value>> {
+            let path = dir.join(format!("{name}.json"));
+            if !path.exists() {
+                return Ok(None);
+            }
+            let raw = std::fs::read_to_string(&path).map_err(CoreError::Io)?;
+            Ok(Some(serde_json::from_str(&raw).map_err(CoreError::Serialization)?))
+        };
+        if let Some(v) = read_vec("sessions")? {
+            let list: Vec<Session> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            let mut map = self.sessions.write().unwrap();
+            for s in list {
+                map.insert(s.id.clone(), s);
+            }
+        }
+        if let Some(v) = read_vec("runs")? {
+            let list: Vec<Run> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            let mut map = self.runs.write().unwrap();
+            for r in list {
+                map.insert(r.id.clone(), r);
+            }
+        }
+        if let Some(v) = read_vec("metrics")? {
+            let list: Vec<MetricPoint> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            *self.metrics.write().unwrap() = list;
+        }
+        if let Some(v) = read_vec("images")? {
+            let list: Vec<Image> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            *self.images.write().unwrap() = list;
+        }
+        if let Some(v) = read_vec("visualizations")? {
+            let list: Vec<Visualization> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            *self.visualizations.write().unwrap() = list;
+        }
+        if let Some(v) = read_vec("datasets")? {
+            let list: Vec<Dataset> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            let mut map = self.datasets.write().unwrap();
+            for d in list {
+                map.insert(d.id.clone(), d);
+            }
+        }
+        if let Some(v) = read_vec("data_items")? {
+            let list: Vec<DataItem> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            let mut map = self.data_items.write().unwrap();
+            for i in list {
+                map.insert(i.id.clone(), i);
+            }
+        }
+        if let Some(v) = read_vec("item_history")? {
+            let list: Vec<DataItemHistory> = serde_json::from_value(v).map_err(CoreError::Serialization)?;
+            *self.item_history.write().unwrap() = list;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use crate::model::{RunStatus};
+
+    #[test]
+    fn snapshot_roundtrip_survives_reloader() {
+        let dir = std::env::temp_dir().join("coach-snap-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = InMemoryStore::new();
+        store
+            .create_session(Session {
+                id: "s1".into(),
+                name: "persist".into(),
+                description: String::new(),
+                status: crate::model::SessionStatus::Active,
+                created_at: ts(),
+                updated_at: ts(),
+                tags: vec![],
+            })
+            .unwrap();
+        store
+            .create_run(Run {
+                id: "r1".into(),
+                name: "run".into(),
+                session_id: None,
+                status: RunStatus::Running,
+                config: None,
+                hparams: serde_json::json!({"lr": 0.1}),
+                dataset_id: None,
+                dataset_hash: None,
+                created_at: ts(),
+                updated_at: ts(),
+                tags: vec![],
+            })
+            .unwrap();
+        store
+            .append_metric_points(&[MetricPoint {
+                run_id: "r1".into(),
+                name: "score".into(),
+                context: serde_json::json!({}),
+                step: 1,
+                epoch: None,
+                value: 0.5,
+                timestamp: ts(),
+            }])
+            .unwrap();
+
+        store.snapshot_to_dir(&dir).unwrap();
+        let reloaded = InMemoryStore::new();
+        reloaded.load_from_dir(&dir).unwrap();
+        assert_eq!(reloaded.list_sessions().unwrap().len(), 1);
+        assert_eq!(reloaded.get_run("r1").unwrap().name, "run");
+        assert_eq!(reloaded.query_metrics("r1", None).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -45,6 +45,11 @@ embedded DuckDB connection. Consequences:
 - An in-memory reference store implements the same traits and is used in
   tests and as the scaffold's default; the DuckDB backend slots in behind
   the `duckdb-backend` cargo feature without changing call sites.
+- Durability: the running server snapshots the store to
+  `<COACH_DATA_DIR>/*.json` (atomic temp-file + rename) and reloads it on
+  boot, so restarts do not lose sessions/runs/metrics/images. The snapshot
+  layer is intentionally thin; when the Parquet/DuckDB backend lands it
+  replaces the file snapshot entirely.
 
 ### The Python layer is tiny and shippable
 

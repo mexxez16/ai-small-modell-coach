@@ -5,6 +5,7 @@ import { api, Run } from "../api/client";
 type QueryResult = {
   parsed: string;
   note: string;
+  matched_runs: Run[];
 };
 
 export default function Runs() {
@@ -65,7 +66,9 @@ export default function Runs() {
         <div className="card">
           <p className="stat-label">Parsed query</p>
           <p style={{ fontFamily: "var(--font-mono)" }}>{result.parsed || "(match all)"}</p>
-          <p className="stat-label">{result.note}</p>
+          <p className="stat-label">
+            Matched runs: {result.matched_runs.length}
+          </p>
         </div>
       )}
       {error && <div className="empty-state">{error}</div>}
