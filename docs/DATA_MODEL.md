@@ -120,6 +120,8 @@ started_at. Managed by coach-api, **not persisted** — respawned on demand.
 
 ## Storage mapping
 
-Rust structs serialize to Parquet (metrics heavy table) and JSON-sidecar
-metadata per run, as documented in `crates/coach-core/src/storage.rs`
-(`parquet_layout` module).
+Rust structs persist to the single SQLite database (`coach.db`); each entity
+maps to one table (`sessions`, `runs`, `metric_points`, `images`,
+`visualizations`, `datasets`, `data_items`, `item_history`,
+`conversion_jobs`). Column names follow the Rust field names in snake_case;
+nested values (hparams, options, context) are stored as JSON strings.

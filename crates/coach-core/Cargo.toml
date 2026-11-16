@@ -9,8 +9,8 @@ repository.workspace = true
 
 [features]
 default = ["inmemory"]
-# Parquet + DuckDB storage backends. Optional for now so the core crate builds
-# without the heavy C++ DuckDB toolchain; the traits are the stable contract.
+# Documented escape hatch for future columnar analytics over SQLite-sized
+# data; not compiled by anything by default.
 duckdb-backend = ["dep:duckdb", "dep:parquet"]
 # SQLite persistence backend (WAL journal, prepared statements). Enabled by
 # coach-api; the bundled C amalgamation keeps building self-contained.

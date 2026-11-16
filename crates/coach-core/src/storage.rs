@@ -1,12 +1,14 @@
 //! Storage traits — the stable contract all backends implement.
 //!
 //! Backends:
-//! - `inmemory` (default): a reference [`InMemoryStore`], used by tests and
-//!   single-process deployments that do not need crash safety yet.
-//! - Parquet + DuckDB (planned behind the `duckdb-backend` feature): all
-//!   entities are stored as Parquet files on local disk (or S3 later), queried
-//!   via an embedded DuckDB connection. This avoids RocksDB entirely, which is
-//!   what keeps Python >= 3.13 compatibility trivial.
+//! - `sqlite` (default in coach-api): [`crate::sqlite_backend::SqliteStore`],
+//!   a single `coach.db` with WAL journaling; used by the server.
+//! - `inmemory`: a reference [`InMemoryStore`], used by tests and as the
+//!   fallback when SQLite cannot be opened.
+//! - Parquet + DuckDB (documented escape hatch behind the `duckdb-backend`
+//!   feature, not built): a columnar analytics layer for metric volumes that
+//!   outgrow SQLite. The `Storage` traits are the stable contract, so it
+//!   slots in without changing call sites.
 
 use crate::error::{CoreError, Result};
 use crate::model::{
@@ -85,8 +87,9 @@ pub trait Storage: Send + Sync {
     fn list_conversion_jobs(&self, dataset_id: &str) -> Result<Vec<ConversionJob>>;
 }
 
-/// Column-partitioned layout used by the Parquet backend (documented for
-/// implementers; not used by the in-memory store):
+/// Column-partitioned layout for the optional Parquet analytics layer (the
+/// `duckdb-backend` escape hatch; not built — SQLite is the storage backend).
+/// Reserved names keep future exports collision-free:
 ///
 /// ```text
 /// data/

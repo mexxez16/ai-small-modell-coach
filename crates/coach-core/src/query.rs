@@ -15,7 +15,7 @@
 //!
 //! The parser is hand-written (no external dependency) and produces a
 //! [`Query`] AST — a conjunction of OR-groups — that backends lower onto
-//! SQL/Parquet predicates.
+//! SQL predicates.
 
 use crate::error::{CoreError, Result};
 use std::fmt;

@@ -20,7 +20,7 @@ and a deliberately tiny Python layer for everything spaCy-specific.
 │ domain model          │         │ (coach_spacy.render,    │
 │ storage traits        │         │  FastAPI/uvicorn, spaCy)│
 │ AimQL-ish query AST   │         └─────────────────────────┘
-│ Parquet + DuckDB      │
+│ SQLite (WAL)          │
 └───────▲───────────────┘
         │ abi3 wheel (PyO3/maturin)
 ┌───────┴───────────────┐
@@ -31,27 +31,30 @@ and a deliberately tiny Python layer for everything spaCy-specific.
 
 ## Decisions
 
-### Storage: Parquet files + embedded DuckDB — no RocksDB
+### Storage: embedded SQLite — no RocksDB
 
-All entities (runs, metric points, images metadata, curation items, audit
-history) are written as Apache Parquet files on local disk (see the layout
-documented in `crates/coach-core/src/storage.rs`) and queried with an
-embedded DuckDB connection. Consequences:
+All entities (runs, metric points, image metadata, curation items, audit
+history) persist to a single SQLite database at
+`<COACH_DATA_DIR>/coach.db` (`rusqlite`, bundled C amalgamation). Consequences:
 
 - No `aimrocks` and therefore **no native wheel blocker on Python >= 3.13**.
   (Upstream `aim` depends on `aimrocks`, which historically lagged new
   Python releases; this project avoids that class of problem entirely.)
-- Columnar metric layout suits the dominant query pattern (series by run).
-- An in-memory reference store implements the same traits and is used in
-  tests and as the scaffold's default; the DuckDB backend slots in behind
-  the `duckdb-backend` cargo feature without changing call sites.
-- Durability: the server persists entities to an SQLite database at
-  `<COACH_DATA_DIR>/coach.db` (WAL journal, prepared statements). A legacy
-  per-file JSON snapshot (`sessions.json`, `metrics.json`, …) is migrated
-  automatically into the database on first boot and left untouched as
-  `snapshot-migrated/`; after that, no whole-store rewrites happen — every
-  mutation is an incremental SQLite write. The DuckDB/Parquet layer slots in
-  on top for columnar analytics without changing this contract.
+- Every mutation is an incremental write (WAL journal, `synchronous=NORMAL`,
+  prepared statements) — no whole-store rewrites when training metrics stream
+  in.
+- SQL indexes cover the dominant query patterns (metric series by run,
+  curation items by dataset/status, history by item). Ad-hoc analytics over
+  the same file stays possible via the standard `sqlite3` CLI or any
+  SQLite-capable tooling (pandas, DuckDB over its sqlite3 extension).
+- Escape hatch: if metric volumes ever outgrow SQLite (tens of millions of
+  points with heavy cross-run analytics), a columnar Parquet + DuckDB layer
+  slots in behind the (uncompiled) `duckdb-backend` cargo feature without
+  changing the `Storage` call sites. It is deliberately not built today —
+  one storage engine means one source of truth.
+- Legacy compatibility: per-file JSON snapshots from the pre-SQLite scaffold
+  (`sessions.json`, `metrics.json`, …) are imported automatically on first
+  boot and left as `snapshot-migrated/`.
 
 ### The Python layer is tiny and shippable
 

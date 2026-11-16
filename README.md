@@ -3,8 +3,8 @@
 A self-hosted coach for fine-tuning small NLP models (starting with spaCy):
 
 - **Track training runs** like Aim — metrics, hyperparameters, run comparison —
-  with a Rust backend backed by Parquet files and embedded DuckDB (no RocksDB,
-  no external database).
+  with a Rust backend persisted to an embedded SQLite database (WAL mode; no
+  RocksDB, no external database server).
 - **Visualize Docs with displaCy** inside the app: `ent`, `dep` and `span`
   styling, live in the browser, exported as SVG/PNG.
 - **Curate training data** like a dataset workbench: review states, audit
@@ -27,7 +27,7 @@ directory of this repository and are not part of this codebase.
 ai-small-modell-coach/
 ├── apps/web/          # React 18 + TypeScript + Vite frontend (own design system)
 ├── crates/
-│   ├── coach-core/    # Rust: domain model + storage/query engine traits (Parquet/DuckDB)
+│   ├── coach-core/    # Rust: domain model + storage/query engine traits (SQLite backend)
 │   ├── coach-api/     # Rust: axum HTTP/WebSocket server, PTY, render-worker mgmt
 │   └── coach-pyo3/    # Rust -> Python SDK (PyO3/maturin, abi3-py313)
 ├── python/coach_spacy # The only Python layer: spaCy logger + displaCy render worker
