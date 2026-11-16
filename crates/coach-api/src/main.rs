@@ -224,6 +224,10 @@ fn build_router(state: AppState) -> Router {
         .route("/api/visualize_png", post(routes::workers::visualize_png_proxy))
 
         .route("/api/query", post(routes::api::query_runs))
+        .route(
+            "/api/datasets/{id}/conversions",
+            get(routes::api::list_conversions).post(routes::api::create_conversion),
+        )
         .route("/api/runs/{id}/assign", post(routes::api::assign_run))
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
