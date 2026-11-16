@@ -11,10 +11,10 @@ import Runs from "./pages/Runs";
 import TrainingData from "./pages/TrainingData";
 import Visualize from "./pages/Visualize";
 import Images from "./pages/Images";
-import Chat from "./pages/Chat";
-import Terminal from "./pages/Terminal";
 import Settings from "./pages/Settings";
 import CommandPalette from "./components/CommandPalette";
+import ChatDock from "./components/ChatDock";
+import TerminalDock from "./components/TerminalDock";
 
 const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: string }> }> = [
   {
@@ -35,11 +35,7 @@ const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: s
   },
   {
     section: "Workbench",
-    items: [
-      { to: "/chat", label: "Chat" },
-      { to: "/terminal", label: "Terminal" },
-      { to: "/settings", label: "Settings" },
-    ],
+    items: [{ to: "/settings", label: "Settings" }],
   },
 ];
 
@@ -56,6 +52,22 @@ function useTheme(): [string, () => void] {
     [],
   );
   return [theme, toggle];
+}
+
+function usePersistedToggle(key: string, initial: boolean): [boolean, () => void] {
+  const [value, setValue] = useState<boolean>(() => {
+    const stored = localStorage.getItem(key);
+    return stored === null ? initial : stored === "true";
+  });
+  const toggle = useCallback(
+    () =>
+      setValue((v) => {
+        localStorage.setItem(key, String(!v));
+        return !v;
+      }),
+    [key],
+  );
+  return [value, toggle];
 }
 
 function Sidebar() {
@@ -84,10 +96,22 @@ function Sidebar() {
   );
 }
 
-function TopBar({ onOpenPalette, theme, toggleTheme }: {
+function TopBar({
+  onOpenPalette,
+  theme,
+  toggleTheme,
+  chatOpen,
+  toggleChat,
+  terminalOpen,
+  toggleTerminal,
+}: {
   onOpenPalette: () => void;
   theme: string;
   toggleTheme: () => void;
+  chatOpen: boolean;
+  toggleChat: () => void;
+  terminalOpen: boolean;
+  toggleTerminal: () => void;
 }) {
   return (
     <header className="topbar">
@@ -95,6 +119,20 @@ function TopBar({ onOpenPalette, theme, toggleTheme }: {
         Search or jump to… <kbd>Ctrl K</kbd>
       </button>
       <div className="topbar-right">
+        <button
+          className={`button ${chatOpen ? "button-primary" : "button-ghost"}`}
+          onClick={toggleChat}
+          aria-pressed={chatOpen}
+        >
+          Chat
+        </button>
+        <button
+          className={`button ${terminalOpen ? "button-primary" : "button-ghost"}`}
+          onClick={toggleTerminal}
+          aria-pressed={terminalOpen}
+        >
+          Terminal
+        </button>
         <button className="button button-ghost" onClick={toggleTheme} aria-label="Toggle color theme">
           {theme === "dark" ? "Light" : "Dark"}
         </button>
@@ -103,13 +141,12 @@ function TopBar({ onOpenPalette, theme, toggleTheme }: {
   );
 }
 
-const PALETTE_ITEMS = NAV_SECTIONS.flatMap((g) => g.items).concat([
-  { to: "/runs?query=", label: "New run query" },
-]);
-
 function App() {
   const [theme, toggleTheme] = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Dock visibility persists across reloads; default: chat open, terminal closed.
+  const [chatOpen, toggleChat] = usePersistedToggle("coach.dock.chat", true);
+  const [terminalOpen, toggleTerminal] = usePersistedToggle("coach.dock.terminal", false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -123,15 +160,34 @@ function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  const anyDock = chatOpen || terminalOpen;
   const items = useMemo(
-    () => PALETTE_ITEMS.map((item) => ({ ...item, action: () => navigate(item.to) })),
-    [navigate],
+    () =>
+      NAV_SECTIONS.flatMap((g) => g.items)
+        .map((item) => ({ label: item.label, action: () => navigate(item.to) }))
+        .concat([
+          { label: "Toggle chat dock", action: toggleChat },
+          { label: "Toggle terminal dock", action: toggleTerminal },
+        ]),
+    [navigate, toggleChat, toggleTerminal],
   );
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${anyDock ? " has-docks" : ""}`}
+      data-chat-open={chatOpen}
+      data-terminal-open={terminalOpen}
+    >
       <Sidebar />
-      <TopBar onOpenPalette={() => setPaletteOpen(true)} theme={theme} toggleTheme={toggleTheme} />
+      <TopBar
+        onOpenPalette={() => setPaletteOpen(true)}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        chatOpen={chatOpen}
+        toggleChat={toggleChat}
+        terminalOpen={terminalOpen}
+        toggleTerminal={toggleTerminal}
+      />
       <main className="content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
@@ -140,11 +196,11 @@ function App() {
           <Route path="/training-data" element={<TrainingData />} />
           <Route path="/visualize" element={<Visualize />} />
           <Route path="/images" element={<Images />} />
-          <Route path="/chat" element={<Chat />} />
-          <Route path="/terminal" element={<Terminal />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+      <ChatDock open={chatOpen} onClose={toggleChat} />
+      <TerminalDock open={terminalOpen} onClose={toggleTerminal} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} />
     </div>
   );

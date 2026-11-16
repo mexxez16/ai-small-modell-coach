@@ -1,7 +1,11 @@
 //! coach-api: axum HTTP + WebSocket server for AI Small Modell Coach.
 
 mod api_error;
+mod chat;
+mod providers;
+mod pty;
 mod state;
+mod terminal;
 mod routes;
 
 use axum::{routing::{delete, get, post}, Router};
@@ -59,9 +63,12 @@ fn build_router(state: AppState) -> Router {
         .route("/api/workers/{id}", delete(routes::workers::stop_worker))
         .route("/api/workers/{id}/health", get(routes::workers::worker_health))
         .route("/ws/metrics", get(routes::ws::metrics_ws))
-        .route("/ws/terminal", get(routes::ws::terminal_ws))
-        .route("/ws/chat", get(routes::ws::chat_ws))
+        .route("/ws/terminal", get(terminal::terminal_ws))
+        .route("/ws/chat", get(chat::chat_ws))
         .route("/ws/jobs", get(routes::ws::jobs_ws))
+        .route("/api/settings/providers", get(routes::settings::list_providers).post(routes::settings::upsert_provider))
+        .route("/api/settings/providers/{id}", delete(routes::settings::delete_provider))
+        .route("/api/settings/providers/{id}/test", post(routes::settings::test_provider))
         .route("/api/openapi.json", get(openapi_json))
         .with_state(state.clone());
 
@@ -199,8 +206,7 @@ mod tests {
             port: None,
             token: None,
             web_dist: None,
-        }));
-        let res = app
+        }));        let res = app
             .oneshot(Request::get("/api/health").body(Body::empty()).unwrap())
             .await
             .unwrap();

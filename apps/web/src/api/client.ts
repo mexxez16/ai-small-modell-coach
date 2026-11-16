@@ -38,6 +38,15 @@ export type RenderWorker = {
   started_at: string;
 };
 
+export type Provider = {
+  id: string;
+  name: string;
+  kind: "openai_compatible" | "vibe";
+  base_url?: string | null;
+  api_key?: string | null; // masked in list responses
+  model?: string | null;
+};
+
 export type VisualizeRequest = {
   worker_id?: string;
   model?: string;
@@ -108,6 +117,18 @@ export const api = {
   workerHealth: (id: string) =>
     request<{ id: string; status: string }>("GET", `/api/workers/${id}/health`),
   stopWorker: (id: string) => request<void>("DELETE", `/api/workers/${id}`),
+  listProviders: () =>
+    request<{ providers: Provider[] }>("GET", "/api/settings/providers"),
+  upsertProvider: (provider: Partial<Provider> & { name: string; kind: Provider["kind"] }) =>
+    request<{ provider: Provider }>("POST", "/api/settings/providers", provider),
+  deleteProvider: (id: string) =>
+    request<void>("DELETE", `/api/settings/providers/${id}`),
+  testProvider: (id: string) =>
+    request<{ ok: boolean; detail: string }>(
+      "POST",
+      `/api/settings/providers/${id}/test`,
+      {},
+    ),
   /** Proxied render endpoint; response size/content-type are validated server side. */
   visualize: (req: VisualizeRequest) =>
     request<VisualizeResponse>("POST", "/api/visualize", req),

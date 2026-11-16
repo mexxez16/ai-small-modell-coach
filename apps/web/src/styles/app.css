@@ -36,6 +36,101 @@ body {
   height: 100%;
 }
 
+/* Dock layout:
+   - chat open      → dock column on the right
+   - terminal open  → terminal band at the bottom (below content and dock)
+   - both open      → both; the terminal band therefore always sits below the
+                      chat dock, matching "Terminal unter dem Chat andockbar". */
+.app-shell.has-docks[data-chat-open="true"][data-terminal-open="false"] {
+  grid-template-columns: var(--sidebar-width) 1fr 420px;
+  grid-template-rows: var(--topbar-height) 1fr;
+  grid-template-areas:
+    "sidebar topbar dock"
+    "sidebar content dock";
+}
+
+.app-shell.has-docks[data-chat-open="false"][data-terminal-open="true"] {
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: var(--topbar-height) 1fr 300px;
+  grid-template-areas:
+    "sidebar topbar"
+    "sidebar content"
+    "sidebar terminal";
+}
+
+.app-shell.has-docks[data-chat-open="true"][data-terminal-open="true"] {
+  grid-template-columns: var(--sidebar-width) 1fr 420px;
+  grid-template-rows: var(--topbar-height) 1fr 300px;
+  grid-template-areas:
+    "sidebar topbar dock"
+    "sidebar content dock"
+    "sidebar terminal terminal";
+}
+
+.dock-chat {
+  grid-area: dock;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dock-terminal {
+  grid-area: terminal;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.dock-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dock-header h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.dock-header .select {
+  margin-left: auto;
+}
+
+.dock-input-row {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-messages {
+  overflow-y: auto;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.chat-messages p {
+  margin: 0 0 var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.terminal-host {
+  overflow: hidden;
+  padding: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
 .sidebar {
   grid-area: sidebar;
   background: var(--color-surface);

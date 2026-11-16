@@ -34,7 +34,8 @@ pub async fn spawn_worker(
 
     // Spawn managed by the OS so the process outlives handler scope; the API
     // supervises it (health check + restart) in a later increment.
-    let mut cmd = std::process::Command::new("python3");
+    let python = std::env::var("COACH_PY").unwrap_or_else(|_| "python3".into());
+    let mut cmd = std::process::Command::new(python);
     cmd.args(["-m", "coach_spacy.render", "--model", &body.model_path]);
     if port != 0 {
         cmd.args(["--port", &port.to_string()]);

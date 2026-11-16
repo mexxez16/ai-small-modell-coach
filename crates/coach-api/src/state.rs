@@ -3,7 +3,8 @@
 use coach_core::model::RenderWorker;
 use coach_core::storage::{InMemoryStore, Storage};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 /// Preferred default bind port. When `COACH_PORT` is unset, the server scans
 /// upward from here until it finds a free port.
@@ -71,17 +72,30 @@ pub struct AppState {
     /// backend behind a feature later on.
     pub storage: Arc<dyn Storage>,
     pub workers: Arc<WorkerRegistry>,
-    /// Serializes PTY allocations until the multi-tab terminal lands.
-    pub pty_lock: Arc<Mutex<()>>,
+    /// Chat provider configs, persisted in `<data_dir>/providers.json`.
+    pub provider_store: Arc<crate::providers::ProviderStore>,
+    /// HTTP client for provider calls (streaming chat completions).
+    pub http_client: reqwest::Client,
+    /// All PTY/socket-based work is scoped to this directory (workspace
+    /// confinement; the agent and terminal never operate outside it).
+    pub workspace_dir: PathBuf,
 }
 
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
+        let data_dir = std::env::var("COACH_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("./data"));
+        let workspace_dir = std::env::var("COACH_WORKSPACE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         AppState {
             config,
             storage: Arc::new(InMemoryStore::new()),
             workers: Arc::new(WorkerRegistry::default()),
-            pty_lock: Arc::new(Mutex::new(())),
+            provider_store: Arc::new(crate::providers::ProviderStore::load(&data_dir)),
+            http_client: reqwest::Client::new(),
+            workspace_dir,
         }
     }
 }

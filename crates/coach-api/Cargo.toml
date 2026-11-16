@@ -12,6 +12,7 @@ coach-core = { path = "../coach-core", features = ["openapi"] }
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tower = { version = "0.5", features = ["util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

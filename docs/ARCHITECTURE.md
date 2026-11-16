@@ -5,12 +5,14 @@ and a deliberately tiny Python layer for everything spaCy-specific.
 
 ```
 ┌───────────────────────────────── apps/web (React 18 + TS + Vite) ─────────┐
-│  Dashboard  Sessions  Runs  Training Data  Visualize  Images  Chat  Term. │
+│  Dashboard  Sessions  Runs  Training Data  Visualize  Images  Settings    │
+│  Right dock: Chat (collapsible) · Bottom dock: Terminal (collapsible)     │
 └─────────────────────────────▲──────────────────────────────────────────────┘
                 REST + WS     │  (typed client, generated from OpenAPI)
 ┌─────────────────────────────┴──────────────────────────────────────────────┐
-│ crates/coach-api (axum): REST, /ws/* fan-out, PTY mgmt, Vibe bridge,       │
-│ render-worker process management, static file serving (SPA fallback)       │
+│ crates/coach-api (axum): REST, /ws/* fan-out, PTY mgmt (/ws/terminal),     │
+│ chat providers (OpenAI-compatible streaming + vibe PTY, see providers.rs), │
+│ render-worker process mgmt, static file serving (SPA fallback)             │
 └───────▲─────────────────────────────────────┬──────────────────────────────┘
         │ CRDT-free shared traits             │ process mgmt
 ┌───────┴───────────────┐         ┌───────────▼─────────────┐
