@@ -15,7 +15,17 @@ type ChatMessage = { role: "user" | "assistant" | "system"; text: string };
  * provider dropdown is fed by the provider list the backend announces on
  * connect (same list as GET /api/settings/providers).
  */
-export default function ChatDock({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function ChatDock({
+  open,
+  onClose,
+  width,
+  onResizeStart,
+}: {
+  open: boolean;
+  onClose: () => void;
+  width: number;
+  onResizeStart: (e: React.PointerEvent) => void;
+}) {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providerId, setProviderId] = useState<string>("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -27,6 +37,25 @@ export default function ChatDock({ open, onClose }: { open: boolean; onClose: ()
   const append = useCallback((message: ChatMessage) => {
     setMessages((m) => [...m, message]);
   }, []);
+
+  const refreshProviders = useCallback(() => {
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "providers" }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    // Providers may be added in Settings while the chat is open; re-fetch the
+    // list when the user returns to the dock.
+    window.addEventListener("focus", refreshProviders);
+    window.addEventListener("coach.providers-changed", refreshProviders);
+    return () => {
+      window.removeEventListener("focus", refreshProviders);
+      window.removeEventListener("coach.providers-changed", refreshProviders);
+    };
+  }, [open, refreshProviders]);
 
   useEffect(() => {
     if (!open) return;
@@ -49,7 +78,7 @@ export default function ChatDock({ open, onClose }: { open: boolean; onClose: ()
       }
       switch (frame.type) {
         case "system": {
-          if (frame.providers?.length) {
+          if (frame.providers) {
             setProviders(frame.providers);
             setProviderId((current) => {
               const stillThere = frame.providers!.some((p) => p.id === current);
@@ -90,7 +119,14 @@ export default function ChatDock({ open, onClose }: { open: boolean; onClose: ()
   if (!open) return null;
 
   return (
-    <aside className="dock-chat" aria-label="Chat dock">
+    <aside className="dock-chat" aria-label="Chat dock" style={{ width }}>
+      <div
+        className="resize-handle resize-handle-x"
+        onPointerDown={onResizeStart}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize chat dock"
+      />
       <header className="dock-header">
         <h3>Chat</h3>
         <select
@@ -113,6 +149,9 @@ export default function ChatDock({ open, onClose }: { open: boolean; onClose: ()
         <span className={`badge badge-${status === "connected" ? "success" : status === "connecting" ? "warning" : "danger"}`}>
           {status}
         </span>
+        <button className="button button-ghost" onClick={refreshProviders} aria-label="Refresh provider list">
+          Refresh
+        </button>
         <button className="button button-ghost" onClick={onClose} aria-label="Close chat dock">
           Hide
         </button>

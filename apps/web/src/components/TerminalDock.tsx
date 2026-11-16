@@ -9,7 +9,15 @@ import "@xterm/xterm/css/xterm.css";
  * real PTY per connection (scoped to the workspace dir); xterm.js renders the
  * raw VT stream and sends raw keystrokes as binary frames.
  */
-export default function TerminalDock({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function TerminalDock({
+  open,
+  onClose,
+  onResizeStart,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onResizeStart: (e: React.PointerEvent) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<{ term: Terminal; fit: FitAddon; socket: WebSocket } | null>(null);
 
@@ -79,6 +87,13 @@ export default function TerminalDock({ open, onClose }: { open: boolean; onClose
 
   return (
     <section className="dock-terminal" aria-label="Terminal dock">
+      <div
+        className="resize-handle resize-handle-y"
+        onPointerDown={onResizeStart}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize terminal dock"
+      />
       <div className="dock-header">
         <h3>Terminal</h3>
         <span className="badge badge-neutral">workspace shell</span>

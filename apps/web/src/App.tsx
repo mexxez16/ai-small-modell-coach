@@ -70,6 +70,29 @@ function usePersistedToggle(key: string, initial: boolean): [boolean, () => void
   return [value, toggle];
 }
 
+const CHAT_WIDTH_KEY = "coach.dock.chatWidth";
+const TERMINAL_HEIGHT_KEY = "coach.dock.terminalHeight";
+const CHAT_WIDTH = { min: 280, max: 640 };
+const TERMINAL_HEIGHT = { min: 150, max: 600 };
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+function usePersistedNumber(key: string, initial: number): [number, (n: number) => void] {
+  const [value, setValue] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(key));
+    return Number.isFinite(stored) && stored > 0 ? stored : initial;
+  });
+  const set = useCallback(
+    (n: number) => {
+      setValue(n);
+      localStorage.setItem(key, String(n));
+    },
+    [key],
+  );
+  return [value, set];
+}
+
 function Sidebar() {
   return (
     <nav className="sidebar" aria-label="Main navigation">
@@ -147,7 +170,45 @@ function App() {
   // Dock visibility persists across reloads; default: chat open, terminal closed.
   const [chatOpen, toggleChat] = usePersistedToggle("coach.dock.chat", true);
   const [terminalOpen, toggleTerminal] = usePersistedToggle("coach.dock.terminal", false);
+  const [chatWidth, setChatWidth] = usePersistedNumber(CHAT_WIDTH_KEY, 420);
+  const [terminalHeight, setTerminalHeight] = usePersistedNumber(TERMINAL_HEIGHT_KEY, 300);
   const navigate = useNavigate();
+
+  const startResizeChat = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = chatWidth;
+      const move = (ev: PointerEvent) =>
+        setChatWidth(clamp(startWidth + (startX - ev.clientX), CHAT_WIDTH.min, CHAT_WIDTH.max));
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [chatWidth, setChatWidth],
+  );
+
+  const startResizeTerminal = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = terminalHeight;
+      const move = (ev: PointerEvent) =>
+        setTerminalHeight(
+          clamp(startHeight + (startY - ev.clientY), TERMINAL_HEIGHT.min, TERMINAL_HEIGHT.max),
+        );
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [terminalHeight, setTerminalHeight],
+  );
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -177,6 +238,12 @@ function App() {
       className={`app-shell${anyDock ? " has-docks" : ""}`}
       data-chat-open={chatOpen}
       data-terminal-open={terminalOpen}
+      style={
+        {
+          "--coach-dock-width": `${chatWidth}px`,
+          "--coach-terminal-height": `${terminalHeight}px`,
+        } as React.CSSProperties
+      }
     >
       <Sidebar />
       <TopBar
@@ -199,8 +266,17 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
-      <ChatDock open={chatOpen} onClose={toggleChat} />
-      <TerminalDock open={terminalOpen} onClose={toggleTerminal} />
+      <ChatDock
+        open={chatOpen}
+        onClose={toggleChat}
+        width={chatWidth}
+        onResizeStart={startResizeChat}
+      />
+      <TerminalDock
+        open={terminalOpen}
+        onClose={toggleTerminal}
+        onResizeStart={startResizeTerminal}
+      />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} items={items} />
     </div>
   );

@@ -21,6 +21,15 @@ export default function CommandPalette({
     return q ? items.filter((i) => i.label.toLowerCase().includes(q)) : items;
   }, [filter, items]);
 
+  const runFirst = () => {
+    const first = filtered[0];
+    if (first) {
+      first.action();
+      onOpenChange(false);
+      setFilter("");
+    }
+  };
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -36,15 +45,22 @@ export default function CommandPalette({
           <input
             className="text-input"
             autoFocus
-            placeholder="Type a page name…"
+            placeholder="Type a page name… (Enter opens the first match)"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                runFirst();
+              }
+            }}
           />
           <div className="command-list">
-            {filtered.map((item) => (
+            {filtered.map((item, index) => (
               <button
                 key={item.label}
                 className="command-item"
+                data-selected={index === 0}
                 onClick={() => {
                   item.action();
                   onOpenChange(false);

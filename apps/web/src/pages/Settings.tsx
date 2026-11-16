@@ -176,6 +176,8 @@ export default function Settings() {
       });
       setEditing(null);
       await refresh();
+      // Let the chat dock (and other listeners) pick up the new list.
+      window.dispatchEvent(new Event("coach.providers-changed"));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -288,6 +290,7 @@ export default function Settings() {
                     onClick={async () => {
                       await api.deleteProvider(provider.id);
                       await refresh();
+                      window.dispatchEvent(new Event("coach.providers-changed"));
                     }}
                   >
                     Delete

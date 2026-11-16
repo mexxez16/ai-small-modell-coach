@@ -76,8 +76,27 @@ async fn run_chat_socket(state: AppState, socket: WebSocket) -> anyhow::Result<(
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
                     continue;
                 };
-                if value.get("type").and_then(|v| v.as_str()) != Some("chat") {
-                    continue;
+                match value.get("type").and_then(|v| v.as_str()) {
+                    Some("chat") => {}
+                    // Client can re-request the provider list (e.g. after
+                    // adding a provider in Settings mid-session).
+                    Some("providers") => {
+                        let providers: Vec<_> = state
+                            .provider_store
+                            .list(true)
+                            .iter()
+                            .map(|p| json!({"id": p.id, "name": p.name, "kind": p.kind}))
+                            .collect();
+                        sender
+                            .send(Message::Text(
+                                json!({"type":"system","providers":providers})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await?;
+                        continue;
+                    }
+                    _ => continue,
                 }
                 let user_text = value.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let Some(provider_id) = value.get("provider_id").and_then(|v| v.as_str()) else {
@@ -125,7 +144,7 @@ async fn run_chat_socket(state: AppState, socket: WebSocket) -> anyhow::Result<(
                                 Err(err) => {
                                     sender
                                         .send(Message::Text(
-                                            json!({"type":"error","message":format!("vime spawn failed: {err:#}")})
+                                            json!({"type":"error","message":format!("vibe spawn failed: {err:#}")})
                                                 .to_string()
                                                 .into(),
                                         ))
@@ -147,8 +166,23 @@ async fn run_chat_socket(state: AppState, socket: WebSocket) -> anyhow::Result<(
                         sender.send(Message::Text(frame.to_string().into())).await?;
                     }
                     None => {
-                        // Relay channel closed.
-                        break;
+                        // The vibe PTY ended (child exited). Report why and
+                        // keep the socket alive so the user can retry or
+                        // switch providers — a dead provider must not tear
+                        // down the chat connection.
+                        let exit_info = vibe
+                            .as_ref()
+                            .and_then(|session| session.exit_code());
+                        let detail = match exit_info {
+                            Some(Ok(code)) => format!("vibe exited with code {code}"),
+                            Some(Err(err)) => format!("vibe exited: {err}"),
+                            None => "vibe session ended".to_string(),
+                        };
+                        if let Some(session) = vibe.take() {
+                            session.kill();
+                        }
+                        let frame = json!({"type":"system","message":detail});
+                        sender.send(Message::Text(frame.to_string().into())).await?;
                     }
                 }
             }
@@ -181,14 +215,20 @@ fn start_vibe_pty(state: &AppState) -> anyhow::Result<pty::PtySession> {
         )
     })?;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+    let term = std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into());
     pty::spawn_pty(
         &shell,
         &["-ic".into(), format!("exec {which_vibe}")],
         Some(state.workspace_dir.clone()),
-        vec![(
-            "COACH_WORKSPACE".into(),
-            state.workspace_dir.display().to_string(),
-        )],
+        vec![
+            (
+                "COACH_WORKSPACE".into(),
+                state.workspace_dir.display().to_string(),
+            ),
+            // The vibe CLI renders a TUI and dies immediately without TERM
+            // (common when the server is started non-interactively).
+            ("TERM".into(), term),
+        ],
         100,
         30,
     )

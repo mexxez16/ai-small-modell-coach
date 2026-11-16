@@ -25,8 +25,12 @@ export default function Sessions() {
   }, [refresh]);
 
   const createSession = async () => {
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setError("Enter a session name before creating.");
+      return;
+    }
     try {
+      setError(null);
       await api.createSession(name.trim());
       setName("");
       await refresh();
@@ -49,10 +53,18 @@ export default function Sessions() {
           className="text-input"
           placeholder="New session name"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          aria-label="New session name"
+          onChange={(event) => {
+            setName(event.target.value);
+            if (error) setError(null);
+          }}
           onKeyDown={(event) => event.key === "Enter" && void createSession()}
         />
-        <button className="button button-primary" onClick={() => void createSession()}>
+        <button
+          className="button button-primary"
+          onClick={() => void createSession()}
+          disabled={!name.trim()}
+        >
           Create session
         </button>
       </div>

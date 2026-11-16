@@ -92,7 +92,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(res.status, detail);
   }
-  return (await res.json()) as T;
+  // 204/empty bodies (e.g. DELETE) must not be parsed as JSON.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
