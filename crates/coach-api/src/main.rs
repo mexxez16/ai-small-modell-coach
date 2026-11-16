@@ -44,26 +44,6 @@ use utoipa::OpenApi;
 )]
 struct ApiDoc;
 
-async fn spa_fallback() -> axum::response::Response {
-    (
-        axum::http::StatusCode::NOT_FOUND,
-        "Not found. Serve the built frontend by starting coach-api with COACH_WEB_DIST set.",
-    )
-        .into_response_compat()
-}
-
-// Small helper so the fallback returns a full response without pulling the
-// IntoResponse trait explicitly at every call site.
-trait IntoResponseCompat {
-    fn into_response_compat(self) -> axum::response::Response;
-}
-
-impl<T: axum::response::IntoResponse> IntoResponseCompat for T {
-    fn into_response_compat(self) -> axum::response::Response {
-        axum::response::IntoResponse::into_response(self)
-    }
-}
-
 fn build_router(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/api/health", get(routes::api::health))
@@ -86,7 +66,35 @@ fn build_router(state: AppState) -> Router {
         .with_state(state.clone());
 
     if let Some(dist) = state.config.web_dist.clone() {
-        let serve = ServeDir::new(dist).fallback(get(spa_fallback));
+        // Static assets from the built frontend; every unknown path (deep
+        // links like /runs) falls back to index.html so the SPA router takes
+        // over.
+        let index_path = dist.join("index.html");
+        let spa_fallback = tower::service_fn(move |_req: axum::extract::Request| {
+            let index_path = index_path.clone();
+            async move {
+                let body = match tokio::fs::read(&index_path).await {
+                    Ok(body) => (
+                        axum::http::StatusCode::OK,
+                        "text/html; charset=utf-8",
+                        body,
+                    ),
+                    Err(_) => (
+                        axum::http::StatusCode::NOT_FOUND,
+                        "text/plain; charset=utf-8",
+                        b"index.html not found in COACH_WEB_DIST".to_vec(),
+                    ),
+                };
+                let (status, content_type, payload) = body;
+                let response = axum::response::Response::builder()
+                    .status(status)
+                    .header("content-type", content_type)
+                    .body(axum::body::Body::from(payload))
+                    .expect("static fallback response is buildable");
+                Ok::<_, std::convert::Infallible>(response)
+            }
+        });
+        let serve = ServeDir::new(dist).fallback(spa_fallback);
         app = app.fallback_service(serve);
     }
     app

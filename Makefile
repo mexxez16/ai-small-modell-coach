@@ -40,7 +40,12 @@ test: build
 	cd apps/web && npx tsc --noEmit
 
 serve: build
-	cargo run -p coach-api
+	@if [ -d apps/web/dist ]; then \
+		COACH_WEB_DIST="$$(pwd)/apps/web/dist" cargo run -p coach-api; \
+	else \
+		echo "Hinweis: apps/web/dist fehlt — nur API, keine UI (make web-build)"; \
+		cargo run -p coach-api; \
+	fi
 
 wheel: $(VENV)/bin/activate
 	cd crates/coach-pyo3 && $(VENV)/bin/maturin build --find-interpreter
