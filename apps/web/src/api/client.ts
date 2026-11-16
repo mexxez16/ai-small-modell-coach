@@ -62,6 +62,19 @@ export type VisualizeResponse = {
   meta: Record<string, unknown>;
 };
 
+export type Visualization = {
+  id: string;
+  run_id?: string | null;
+  session_id?: string | null;
+  worker_model: string;
+  text?: string | null;
+  dataset_item_id?: string | null;
+  style: string;
+  options: unknown;
+  svg: string;
+  created_at: string;
+};
+
 export type Health = { status: string; version: string };
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -134,4 +147,20 @@ export const api = {
   /** Proxied render endpoint; response size/content-type are validated server side. */
   visualize: (req: VisualizeRequest) =>
     request<VisualizeResponse>("POST", "/api/visualize", req),
+  /** Raster export (PNG). Only style="dep" yields SVG the worker can rasterize. */
+  visualizePng: (req: VisualizeRequest) =>
+    request<{ png_base64: string; meta: Record<string, unknown> }>(
+      "POST",
+      "/api/visualize_png",
+      req,
+    ),
+  listVisualizations: () => request<Visualization[]>("GET", "/api/visualizations"),
+  saveVisualization: (payload: {
+    run_id?: string;
+    worker_model: string;
+    text?: string;
+    style: string;
+    options?: Record<string, unknown>;
+    svg: string;
+  }) => request<Visualization>("POST", "/api/visualizations", payload),
 };

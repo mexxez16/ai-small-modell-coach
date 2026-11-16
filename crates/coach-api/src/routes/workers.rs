@@ -42,8 +42,10 @@ pub async fn spawn_worker(
     if port != 0 {
         cmd.args(["--port", &port.to_string()]);
     }
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    // Inherit stdio so worker startup errors (import failures, model load
+    // errors) surface directly in the coach-api log instead of vanishing.
+    cmd.stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
     let pid = match cmd.spawn() {
         Ok(child) => Some(child.id()),
         Err(e) => {
@@ -136,6 +138,22 @@ pub async fn visualize_proxy(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    forward_to_worker(state, body, false).await
+}
+
+#[utoipa::path(post, path = "/api/visualize_png", request_body = serde_json::Value, responses((status = 200, body = serde_json::Value)))]
+pub async fn visualize_png_proxy(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    forward_to_worker(state, body, true).await
+}
+
+async fn forward_to_worker(
+    state: AppState,
+    body: serde_json::Value,
+    png: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
     use serde_json::json;
 
     // Resolve the target worker: explicit id, else the first Ready/Starting.
@@ -150,7 +168,8 @@ pub async fn visualize_proxy(
     }
     .ok_or(coach_core::CoreError::NotFound("no render worker registered".into()))?;
 
-    let url = format!("http://127.0.0.1:{}/render", worker.port);
+    let path = if png { "render_png" } else { "render" };
+    let url = format!("http://127.0.0.1:{}/{path}", worker.port);
     let forward = json!({
         "text": body.get("text").and_then(|v| v.as_str()).unwrap_or(""),
         "style": body.get("style").and_then(|v| v.as_str()).unwrap_or("ent"),
@@ -225,15 +244,25 @@ fn resolve_python() -> String {
             return path;
         }
     }
-    let cwd = std::env::current_dir().unwrap_or_default();
-    for candidate in [
-        cwd.join(".venv-coach/bin/python3"),
-        cwd.join(".venv/bin/python3"),
-        cwd.join(".venv-coach/bin/python"),
-        cwd.join(".venv/bin/python"),
+    // Walk from the cwd (and the workspace dir) upward, so a venv next to the
+    // project root (e.g. "<repo>/../.venv-coach" when the server runs in a
+    // subdir) is found instead of falling back to a bare `python3` that has
+    // neither spaCy nor coach_spacy installed.
+    for base in [
+        std::env::current_dir().unwrap_or_default(),
+        std::path::PathBuf::from(std::env::var("COACH_WORKSPACE").unwrap_or_default()),
     ] {
-        if candidate.is_file() {
-            return candidate.display().to_string();
+        let mut dir: Option<&std::path::Path> = Some(base.as_path());
+        while let Some(ancestor) = dir {
+            for name in [".venv-coach", ".venv"] {
+                for bin in ["python3", "python"] {
+                    let candidate = ancestor.join(name).join("bin").join(bin);
+                    if candidate.is_file() {
+                        return candidate.display().to_string();
+                    }
+                }
+            }
+            dir = ancestor.parent();
         }
     }
     "python3".into()

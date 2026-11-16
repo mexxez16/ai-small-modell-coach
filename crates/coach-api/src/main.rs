@@ -83,6 +83,7 @@ use utoipa::OpenApi;
         routes::workers::stop_worker,
 
         routes::workers::visualize_proxy,
+        routes::workers::visualize_png_proxy,
 
     ),
 
@@ -170,6 +171,7 @@ fn build_router(state: AppState) -> Router {
         .route("/api/model-candidates", get(routes::api::model_candidates))
 
         .route("/api/visualize", post(routes::workers::visualize_proxy))
+        .route("/api/visualize_png", post(routes::workers::visualize_png_proxy))
 
         .route("/api/query", post(routes::api::query_runs))
 

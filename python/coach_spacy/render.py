@@ -14,6 +14,8 @@ Security notes:
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import re
 from typing import Any, Dict, List, Optional
 
@@ -61,6 +63,11 @@ class RenderRequest(BaseModel):
 class RenderResponse(BaseModel):
     svg: str
     html: str
+    meta: Dict[str, Any]
+
+
+class PngResponse(BaseModel):
+    png_base64: str
     meta: Dict[str, Any]
 
 
@@ -171,6 +178,38 @@ def create_app(model: str) -> FastAPI:
                 "n_tokens": len(doc),
                 "options": options,
             },
+        )
+
+    @app.post("/render_png", response_model=PngResponse)
+    def render_png(req: RenderRequest) -> PngResponse:
+        """SVG -> PNG conversion for raster export.
+
+        Only `dep` renders are pure SVG; `ent`/`span` return HTML fragments
+        that no pure-Python rasterizer can convert (no headless browser by
+        design), so those are rejected with a 422.
+        """
+        if req.style != "dep":
+            raise HTTPException(
+                status_code=422,
+                detail="PNG export requires style='dep' (ent/span render HTML, not SVG)",
+            )
+        rendered = render(req)
+        try:
+            import io
+
+            import cairosvg
+        except ImportError as err:
+            raise HTTPException(
+                status_code=503,
+                detail="cairosvg not installed; install the package with the 'viz' extra",
+            ) from err
+        png_bytes = cairosvg.svg2png(
+            bytestring=rendered.svg.encode("utf-8"),
+            background_color=req.options.get("bg", "#ffffff"),
+        )
+        meta = dict(rendered.meta)
+        return PngResponse(
+            png_base64=base64.b64encode(png_bytes).decode("ascii"), meta=meta
         )
 
     return app
