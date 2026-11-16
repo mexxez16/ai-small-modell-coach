@@ -26,7 +26,7 @@ Two ways to enable:
 [training.logger]
 @loggers = "coach_spacy.logger:coach_logger"
 run_name = "textcat-baseline"
-api_url = "http://127.0.0.1:8000"
+api_url = "http://127.0.0.1:8901"
 # optional:
 # session_id = "…"
 # viz_path = "sample_docs.spacy"     # DocBin of sample docs (aim-spacy convention)

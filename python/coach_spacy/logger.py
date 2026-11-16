@@ -7,7 +7,7 @@ Usage in a spaCy training config::
     [training.logger]
     @loggers = "coach_spacy.logger:coach_logger"
     run_name = "textcat-baseline"
-    api_url = "http://127.0.0.1:8000"
+    api_url = "http://127.0.0.1:8901"
 
 Also registered under the ``spacy_loggers`` entry point group as
 ``coach.AimLogger.v1``.
@@ -38,7 +38,7 @@ def _utcnow() -> str:
 
 def coach_logger(
     run_name: Optional[str] = None,
-    api_url: str = "http://127.0.0.1:8000",
+    api_url: str = "http://127.0.0.1:8901",
     session_id: Optional[str] = None,
     token: Optional[str] = None,
     viz_path: Optional[str] = None,

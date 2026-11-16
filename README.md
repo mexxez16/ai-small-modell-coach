@@ -52,6 +52,8 @@ make wheel
 make web-build
 
 # 4. Run the API server (serves the built frontend too)
+#    Default port is 8901; if it is taken, the server scans upward
+#    (8901, 8902, ...). Set COACH_PORT=<n> to pin an exact port.
 make serve
 
 # 5. Run tests (Rust unit tests, Python smoke tests, frontend lint/build)
@@ -64,7 +66,7 @@ Training a spaCy pipeline with the coach logger:
 # in your spaCy training config
 [training.logger]
 @loggers = "coach_spacy.logger:coach_logger"
-api_url = "http://127.0.0.1:8000"
+api_url = "http://127.0.0.1:8901"
 run_name = "textcat-baseline"
 ```
 

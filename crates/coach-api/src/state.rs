@@ -5,10 +5,18 @@ use coach_core::storage::{InMemoryStore, Storage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+/// Preferred default bind port. When `COACH_PORT` is unset, the server scans
+/// upward from here until it finds a free port.
+pub const DEFAULT_PORT: u16 = 8901;
+/// How many consecutive ports to try before giving up.
+pub const PORT_SCAN_TRIES: u16 = 20;
+
 /// Server configuration from the environment.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    pub port: u16,
+    /// Explicit bind port from `COACH_PORT`, or `None` to scan upward from
+    /// `DEFAULT_PORT` (8901) for a free port.
+    pub port: Option<u16>,
     /// Single-user auth token. Empty disables auth (localhost dev default).
     #[allow(dead_code)] // enforced by middleware when auth lands
     pub token: Option<String>,
@@ -20,8 +28,7 @@ impl AppConfig {
     pub fn from_env() -> Self {
         let port = std::env::var("COACH_PORT")
             .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(8000);
+            .and_then(|p| p.parse().ok());
         let token = std::env::var("COACH_TOKEN").ok().filter(|t| !t.is_empty());
         let web_dist = std::env::var("COACH_WEB_DIST")
             .ok()

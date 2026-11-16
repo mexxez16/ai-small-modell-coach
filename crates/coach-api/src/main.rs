@@ -5,7 +5,7 @@ mod state;
 mod routes;
 
 use axum::{routing::{delete, get, post}, Router};
-use state::{AppConfig, AppState};
+use state::{AppConfig, DEFAULT_PORT, PORT_SCAN_TRIES, AppState};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -106,14 +106,67 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = AppConfig::from_env();
-    let port = config.port;
-    let app = build_router(AppState::new(config)).layer(TraceLayer::new_for_http());
+    let app = build_router(AppState::new(config.clone())).layer(TraceLayer::new_for_http());
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    tracing::info!("coach-api listening on http://{addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let (listener, port) = bind_listener(config.port).await?;
+    tracing::info!("coach-api listening on http://127.0.0.1:{port}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Bind to the explicit `COACH_PORT` when set; otherwise scan upward from
+/// `DEFAULT_PORT` (8901) to avoid conflicts with other local services.
+async fn bind_listener(explicit_port: Option<u16>) -> anyhow::Result<(tokio::net::TcpListener, u16)> {
+    if let Some(port) = explicit_port {
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("COACH_PORT {port} requested but not bindable: {e}"))?;
+        return Ok((listener, port));
+    }
+    for offset in 0..PORT_SCAN_TRIES {
+        let port = DEFAULT_PORT + offset;
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => return Ok((listener, port)),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tracing::debug!(port, "port in use, trying next");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(anyhow::anyhow!(
+        "no free port found in {DEFAULT_PORT}..{}",
+        DEFAULT_PORT + PORT_SCAN_TRIES
+    ))
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn explicit_port_binds_exactly() {
+        // Off the scan range (8901..) so the two port tests never fight over
+        // the same port when run in parallel.
+        let explicit = DEFAULT_PORT + 100;
+        let (listener, port) = bind_listener(Some(explicit)).await.unwrap();
+        assert_eq!(port, explicit);
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn scan_skips_occupied_default_port() {
+        // Hold 8901, then bind without COACH_PORT: must land on 8902.
+        let holder = tokio::net::TcpListener::bind(
+            std::net::SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)),
+        )
+        .await
+        .unwrap();
+        let (_listener, port) = bind_listener(None).await.unwrap();
+        assert_eq!(port, DEFAULT_PORT + 1);
+        drop(holder);
+    }
 }
 
 #[cfg(test)]
@@ -126,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn health_endpoint_responds() {
         let app = build_router(AppState::new(AppConfig {
-            port: 0,
+            port: None,
             token: None,
             web_dist: None,
         }));
@@ -143,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn session_roundtrip_over_http() {
         let app = build_router(AppState::new(AppConfig {
-            port: 0,
+            port: None,
             token: None,
             web_dist: None,
         }));
@@ -162,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn query_parses_aimql() {
         let app = build_router(AppState::new(AppConfig {
-            port: 0,
+            port: None,
             token: None,
             web_dist: None,
         }));
