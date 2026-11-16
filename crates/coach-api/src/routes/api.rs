@@ -504,6 +504,62 @@ pub async fn list_visualizations(
     Ok(Json(items))
 }
 
+/// Aggregated top-level numbers + indexes for the Dashboard page
+/// (`GET /api/dashboard`). One round-trip; avoids N+1 client fetches.
+#[utoipa::path(get, path = "/api/dashboard", responses((status = 200, body = serde_json::Value)))]
+pub async fn dashboard_summary(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use serde_json::json;
+
+    let sessions = state.storage.list_sessions()?;
+    let mut runs = state.storage.list_runs(None)?;
+    runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let by_status = |wanted: coach_core::model::RunStatus| {
+        runs.iter()
+            .filter(|r| r.status == wanted)
+            .count()
+    };
+    let datasets = state.storage.list_datasets()?;
+    let items: usize = datasets
+        .iter()
+        .map(|d| {
+            state
+                .storage
+                .list_data_items(&d.id, None)
+                .map(|i| i.len())
+                .unwrap_or(0)
+        })
+        .sum();
+    let images = state.storage.list_images(None)?.len();
+    let visualizations = state.storage.list_visualizations(None)?.len();
+    let metric_names = state.storage.list_metric_names()?;
+
+    let recent = runs.iter().take(6).cloned().collect::<Vec<_>>();
+    Ok(Json(json!({
+        "counts": {
+            "sessions": sessions.len(),
+            "runs_total": runs.len(),
+            "runs_running": by_status(coach_core::model::RunStatus::Running),
+            "runs_completed": by_status(coach_core::model::RunStatus::Completed),
+            "runs_failed": by_status(coach_core::model::RunStatus::Failed),
+            "datasets": datasets.len(),
+            "data_items": items,
+            "images": images,
+            "visualizations": visualizations,
+        },
+        "recent_runs": recent,
+        "metric_names": metric_names,
+        "params": runs.iter().take(20).map(|r| json!({
+            "id": r.id,
+            "name": r.name,
+            "status": r.status,
+            "hparams": r.hparams,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
 // ---------------------------------------------------------------------------
 // Datasets + data items (curation workbench)
 // ---------------------------------------------------------------------------

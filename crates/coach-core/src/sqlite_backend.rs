@@ -801,6 +801,17 @@ impl Storage for SqliteStore {
         Ok(rows)
     }
 
+    fn list_metric_names(&self) -> Result<Vec<String>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT name FROM metric_points ORDER BY name",
+        )?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(names)
+    }
+
     // --- Images ---
 
     fn put_image(&self, image: Image) -> Result<Image> {

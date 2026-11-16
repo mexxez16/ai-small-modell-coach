@@ -77,6 +77,23 @@ export type Visualization = {
 
 export type Health = { status: string; version: string };
 
+export type DashboardData = {
+  counts: {
+    sessions: number;
+    runs_total: number;
+    runs_running: number;
+    runs_completed: number;
+    runs_failed: number;
+    datasets: number;
+    data_items: number;
+    images: number;
+    visualizations: number;
+  };
+  recent_runs: Run[];
+  metric_names: string[];
+  params: Array<{ id: string; name: string; status: string; hparams: unknown }>;
+};
+
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export class ApiError extends Error {
@@ -112,6 +129,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   health: () => request<Health>("GET", "/api/health"),
+  dashboard: () => request<DashboardData>("GET", "/api/dashboard"),
   listSessions: () => request<Session[]>("GET", "/api/sessions"),
   createSession: (name: string, description = "") =>
     request<Session>("POST", "/api/sessions", { name, description }),

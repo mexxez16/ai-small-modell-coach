@@ -39,6 +39,7 @@ use utoipa::OpenApi;
     paths(
 
         routes::api::health,
+        routes::api::dashboard_summary,
 
         routes::api::create_session,
 
@@ -128,6 +129,7 @@ fn build_router(state: AppState) -> Router {
     let mut app = Router::new()
 
         .route("/api/health", get(routes::api::health))
+        .route("/api/dashboard", get(routes::api::dashboard_summary))
 
         .route("/api/sessions", get(routes::api::list_sessions).post(routes::api::create_session))
 

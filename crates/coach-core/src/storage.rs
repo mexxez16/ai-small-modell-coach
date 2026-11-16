@@ -60,6 +60,9 @@ pub trait Storage: Send + Sync {
     fn append_metric_points(&self, points: &[MetricPoint]) -> Result<()>;
     fn query_metrics(&self, run_id: &str, name: Option<&str>) -> Result<Vec<MetricPoint>>;
 
+    /// Distinct metric names (for dashboard/metrics-grid indexes).
+    fn list_metric_names(&self) -> Result<Vec<String>>;
+
     // Images
     fn put_image(&self, image: Image) -> Result<Image>;
     fn list_images(&self, run_id: Option<&str>) -> Result<Vec<Image>>;
@@ -258,6 +261,19 @@ impl Storage for InMemoryStore {
             .filter(|p| p.run_id == run_id && name.is_none_or(|n| p.name == n))
             .cloned()
             .collect())
+    }
+
+    fn list_metric_names(&self) -> Result<Vec<String>> {
+        let mut names: Vec<String> = self
+            .metrics
+            .read()
+            .unwrap()
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 
     fn put_image(&self, image: Image) -> Result<Image> {
