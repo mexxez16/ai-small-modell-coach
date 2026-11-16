@@ -1,0 +1,18 @@
+[package]
+name = "coach-pyo3"
+description = "PyO3 SDK for AI Small Modell Coach: the ingest SDK used by the spaCy logger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "coach_sdk"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.25", features = ["abi3-py313", "extension-module"] }
+serde.workspace = true
+serde_json.workspace = true
+coach-core = { path = "../coach-core" }

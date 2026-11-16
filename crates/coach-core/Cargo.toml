@@ -1,0 +1,31 @@
+[package]
+name = "coach-core"
+description = "Domain model, storage and query engine for AI Small Modell Coach"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["inmemory"]
+# Parquet + DuckDB storage backends. Optional for now so the core crate builds
+# without the heavy C++ DuckDB toolchain; the traits are the stable contract.
+duckdb-backend = ["dep:duckdb", "dep:parquet"]
+inmemory = []
+# OpenAPI schema derives, enabled by coach-api.
+openapi = ["dep:utoipa"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+utoipa = { version = "5", features = ["chrono"], optional = true }
+duckdb = { version = "1.1", optional = true }
+parquet = { version = "54", optional = true }
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "coach"
+description = "AI Small Modell Coach ingest SDK (PyO3, abi3-py313)"
+readme = { text = "AI Small Modell Coach ingest SDK (see the repository README and LICENSE at the repo root).", content-type = "text/plain" }
+license = "MIT"
+authors = [{ name = "Kenichi-Maximilian Pestemer", email = "max.pestemer@gmail.com" }]
+requires-python = ">=3.13"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3.13",
+]
+
+[tool.maturin]
+# The wheel is abi3-py313: one wheel runs on 3.13 and all future versions.
+# The extension module name is `coach_sdk` (set via [lib] name in Cargo.toml).
