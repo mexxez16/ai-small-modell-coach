@@ -124,6 +124,54 @@ struct ApiDoc;
 
 
 
+/// Token gate: when `COACH_TOKEN` is configured, every `/api/*` and `/ws/*`
+/// request must present the token via `Authorization: Bearer …`,
+/// `X-Coach-Token: …` or `?token=…`. `/api/health` and static assets stay
+/// open so the SPA can boot.
+async fn require_token(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(expected) = state.config.token.as_deref() {
+        let path = req.uri().path();
+        let open = path == "/api/health" || !path.starts_with("/api") && !path.starts_with("/ws");
+        if !open {
+            let presented = req
+                .headers()
+                .get("X-Coach-Token")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    req.headers()
+                        .get("Authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.strip_prefix("Bearer ").map(|s| s.to_string()))
+                })
+                .or_else(|| {
+                    let query = req.uri().query()?;
+                    let token_part = query
+                        .split('&')
+                        .map(|kv| {
+                            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                            (k, v)
+                        })
+                        .find(|(k, _)| *k == "token")
+                        .map(|(_, v)| v.to_string());
+                    token_part
+                });
+            let ok = presented.as_deref() == Some(expected);
+            if !ok {
+                return axum::response::Response::builder()
+                    .status(axum::http::StatusCode::UNAUTHORIZED)
+                    .body(axum::body::Body::from("unauthorized"))
+                    .expect("unauthorized response is buildable");
+            }
+        }
+    }
+    next.run(req).await
+}
+
 fn build_router(state: AppState) -> Router {
 
     let mut app = Router::new()
@@ -208,7 +256,7 @@ fn build_router(state: AppState) -> Router {
 
         .route("/api/openapi.json", get(openapi_json))
 
-        .with_state(state.clone());
+        .with_state(state.clone()).layer(axum::middleware::from_fn_with_state(state.clone(), require_token));
 
 
 
