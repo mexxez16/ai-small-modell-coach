@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Rust
+target/
+Cargo.lock.orig
+
+# Node / frontend
+node_modules/
+apps/web/dist/
+*.tsbuildinfo
+
+# Data / runtime artifacts
+data/
+*.parquet
+*.duckdb
+*.sqlite
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
