@@ -51,7 +51,6 @@ pub async fn create_session(
         updated_at: ts,
         tags: vec![],
     };
-    state.mark_dirty();
     Ok(Json(state.storage.create_session(session)?))
 }
 
@@ -92,7 +91,6 @@ pub async fn create_run(
         updated_at: ts,
         tags: body.tags,
     };
-    state.mark_dirty();
     Ok(Json(state.storage.create_run(run)?))
 }
 
@@ -136,7 +134,6 @@ pub async fn append_metrics(
     for point in &points {
         let _ = state.metric_bus.send(point.clone());
     }
-    state.mark_dirty();
     Ok(Json(json!({"accepted": points.len()})))
 }
 
@@ -361,7 +358,6 @@ pub async fn update_run_status(
 ) -> Result<Json<Run>, ApiError> {
     let mut run = state.storage.get_run(&run_id)?;
     run.status = body.status;
-    state.mark_dirty();
     Ok(Json(state.storage.update_run(run)?))
 }
 
@@ -410,7 +406,6 @@ pub async fn put_run_image(
         meta: body.meta,
         created_at: now(),
     };
-    state.mark_dirty();
     Ok(Json(state.storage.put_image(image)?))
 }
 
@@ -490,7 +485,6 @@ pub async fn put_visualization(
         svg: body.svg,
         created_at: now(),
     };
-    state.mark_dirty();
     Ok(Json(state.storage.put_visualization(viz)?))
 }
 
@@ -541,7 +535,6 @@ pub async fn create_dataset(
         updated_at: now(),
         versions: vec![],
     };
-    state.mark_dirty();
     Ok(Json(state.storage.create_dataset(dataset)?))
 }
 
@@ -711,7 +704,6 @@ pub async fn import_bundle(
     Json(bundle): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     state.storage.import_json(bundle)?;
-    state.mark_dirty();
     Ok(Json(json!({"status": "imported"})))
 }
 
@@ -730,7 +722,6 @@ pub async fn model_candidates(
 /// Find spaCy pipeline candidates: directories that contain both
 /// `meta.json` and `config.cfg` up to 3 levels deep under `root`.
 fn scan_model_roots(root: std::path::PathBuf) -> Vec<String> {
-    use std::path::PathBuf;
     let mut found = Vec::new();
     fn is_pipeline(dir: &std::path::Path) -> bool {
         dir.join("meta.json").is_file() && dir.join("config.cfg").is_file()

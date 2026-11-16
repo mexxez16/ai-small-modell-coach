@@ -45,11 +45,13 @@ embedded DuckDB connection. Consequences:
 - An in-memory reference store implements the same traits and is used in
   tests and as the scaffold's default; the DuckDB backend slots in behind
   the `duckdb-backend` cargo feature without changing call sites.
-- Durability: the running server snapshots the store to
-  `<COACH_DATA_DIR>/*.json` (atomic temp-file + rename) and reloads it on
-  boot, so restarts do not lose sessions/runs/metrics/images. The snapshot
-  layer is intentionally thin; when the Parquet/DuckDB backend lands it
-  replaces the file snapshot entirely.
+- Durability: the server persists entities to an SQLite database at
+  `<COACH_DATA_DIR>/coach.db` (WAL journal, prepared statements). A legacy
+  per-file JSON snapshot (`sessions.json`, `metrics.json`, …) is migrated
+  automatically into the database on first boot and left untouched as
+  `snapshot-migrated/`; after that, no whole-store rewrites happen — every
+  mutation is an incremental SQLite write. The DuckDB/Parquet layer slots in
+  on top for columnar analytics without changing this contract.
 
 ### The Python layer is tiny and shippable
 

@@ -8,6 +8,8 @@
 pub mod error;
 pub mod model;
 pub mod query;
+#[cfg(feature = "sqlite")]
+pub mod sqlite_backend;
 pub mod storage;
 
 pub use error::{CoreError, Result};

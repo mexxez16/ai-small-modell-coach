@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = ["sqlite-backend"]
+sqlite-backend = ["coach-core/sqlite"]
+
 [dependencies]
 coach-core = { path = "../coach-core", features = ["openapi"] }
 axum = { version = "0.8", features = ["ws"] }

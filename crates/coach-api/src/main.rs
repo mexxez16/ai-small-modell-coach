@@ -311,40 +311,6 @@ async fn main() -> anyhow::Result<()> {
 
 
 
-    // Periodic store snapshot: every 1 s, serialize the in-memory store into
-
-    // the snapshot directory (cheap; keeps a restart from losing data).
-
-    {
-
-        let snap_state = app_state.clone();
-
-        tokio::spawn(async move {
-
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
-
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-            loop {
-
-                ticker.tick().await;
-
-                if snap_state.snapshot_dirty() {
-
-                    snap_state.persist_snapshot();
-
-                    snap_state.clear_dirty();
-
-                }
-
-            }
-
-        });
-
-    }
-
-
-
     let (listener, port) = bind_listener(config.port, DEFAULT_PORT).await?;
 
     tracing::info!("coach-api listening on http://127.0.0.1:{port}");
@@ -497,6 +463,17 @@ mod tests {
 
     use tower::ServiceExt;
 
+    /// Isolated temp data dir per test (SQLite would otherwise fight over
+    /// `./data/coach.db` when tests run in parallel).
+    fn test_data_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "coach-api-test-{label}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
 
 
     #[tokio::test]
@@ -510,6 +487,9 @@ mod tests {
             token: None,
 
             web_dist: None,
+
+            data_dir: Some(test_data_dir("health")),
+
 
         }));        let res = app
 
@@ -542,6 +522,9 @@ mod tests {
             token: None,
 
             web_dist: None,
+
+            data_dir: Some(test_data_dir("sessions")),
+
 
         }));
 
@@ -580,6 +563,9 @@ mod tests {
             token: None,
 
             web_dist: None,
+
+            data_dir: Some(test_data_dir("query")),
+
 
         }));
 

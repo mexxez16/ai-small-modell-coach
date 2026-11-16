@@ -21,4 +21,8 @@ pub enum CoreError {
 
     #[error("storage backend not implemented: {0}")]
     NotImplemented(String),
+
+    #[cfg(feature = "sqlite")]
+    #[error("database: {0}")]
+    Database(#[from] rusqlite::Error),
 }
