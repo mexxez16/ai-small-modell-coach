@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coach-spacy"
+version = "0.1.0"
+description = "spaCy glue for AI Small Modell Coach: training logger + displaCy render worker"
+readme = "coach_spacy/README.md"
+license = "MIT"
+authors = [{ name = "Kenichi-Maximilian Pestemer", email = "max.pestemer@gmail.com" }]
+requires-python = ">=3.13"
+dependencies = [
+    "spacy>=3.8,<4.2",
+]
+classifiers = [
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+# PNG export for training-time visualizations. Pure-Python wheels only:
+# no chromium, no html2image (unlike upstream aim-spacy, whose eager
+# html2image import broke environments without a browser).
+viz = ["cairosvg"]
+worker = ["fastapi", "uvicorn"]
+dev = ["pytest", "httpx"]
+
+[project.entry-points."spacy_loggers"]
+"coach.AimLogger.v1" = "coach_spacy.logger:coach_logger"
+
+[tool.setuptools.packages.find]
+include = ["coach_spacy*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: end-to-end smoke tests (training run, render worker boot)",
+]
