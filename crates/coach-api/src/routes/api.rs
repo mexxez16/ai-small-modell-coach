@@ -560,6 +560,27 @@ pub async fn dashboard_summary(
     })))
 }
 
+/// Assign a run to a session (`POST /api/runs/{id}/assign`, body: session_id).
+#[utoipa::path(post, path = "/api/runs/{id}/assign", responses((status = 200, body = Run)))]
+pub async fn assign_run(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let run = state.storage.get_run(&id)?;
+    let session_id = body
+        .get("session_id")
+        .map(|v| v.as_str().unwrap_or("").to_string());
+    if let Some(sid) = &session_id {
+        // The session must exist — typos should fail loudly, not orphan the run.
+        state.storage.get_session(sid)?;
+    }
+    let mut run = run;
+    run.session_id = session_id;
+    state.storage.update_run(run).map_err(|e| e)?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 // ---------------------------------------------------------------------------
 // Datasets + data items (curation workbench)
 // ---------------------------------------------------------------------------
