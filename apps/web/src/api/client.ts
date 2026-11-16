@@ -62,6 +62,13 @@ export type VisualizeResponse = {
   meta: Record<string, unknown>;
 };
 
+export type Scope = {
+  id: string;
+  name: string;
+  query: string;
+  created_at: string;
+};
+
 export type Visualization = {
   id: string;
   run_id?: string | null;
@@ -173,6 +180,10 @@ export const api = {
       req,
     ),
   listVisualizations: () => request<Visualization[]>("GET", "/api/visualizations"),
+  listScopes: () => request<Scope[]>("GET", "/api/scopes"),
+  saveScope: (name: string, query: string) =>
+    request<Scope>("POST", "/api/scopes", { name, query }),
+  deleteScope: (id: string) => request<void>("DELETE", `/api/scopes/${id}`),
   saveVisualization: (payload: {
     run_id?: string;
     worker_model: string;

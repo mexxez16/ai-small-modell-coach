@@ -1,8 +1,9 @@
 use axum::{extract::{Path as AxumPath, State}, Json};
 use sha2::{Digest, Sha256};
+use serde::Deserialize;
 use coach_core::model::{new_id, now, Dataset, Image, Run, RunStatus, Session, SessionStatus, ConversionJob };
 use coach_core::model::{
-    DataItem, DataItemHistory, DataItemKind, DataItemStatus, DataSplit, InputFields, Visualization,
+    DataItem, DataItemHistory, DataItemKind, DataItemStatus, DataSplit, InputFields, Scope, Visualization,
 };
 
 use coach_core::query::{self, Query};
@@ -958,4 +959,44 @@ pub async fn list_conversions(
     let mut jobs = state.storage.list_conversion_jobs(&dataset_id)?;
     jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(Json(jobs))
+}
+/// List saved query scopes (`GET /api/scopes`).
+#[utoipa::path(get, path = "/api/scopes", responses((status = 200, body = [Scope])))]
+pub async fn list_scopes(State(state): State<AppState>) -> Result<Json<Vec<Scope>>, ApiError> {
+    Ok(Json(state.storage.list_scopes()?))
+}
+
+/// Save a query scope (`POST /api/scopes`, body: name + query).
+#[utoipa::path(post, path = "/api/scopes", request_body = ScopeIn, responses((status = 200, body = Scope)))]
+pub async fn create_scope(
+    State(state): State<AppState>,
+    Json(body): Json<ScopeIn>,
+) -> Result<Json<Scope>, ApiError> {
+    let scope = Scope {
+        id: new_id(),
+        name: body.name.trim().to_string(),
+        query: body.query.trim().to_string(),
+        created_at: now(),
+    };
+    if scope.name.is_empty() || scope.query.is_empty() {
+        return Err(coach_core::CoreError::InvalidQuery("name and query are required".into()).into());
+    }
+    Ok(Json(state.storage.put_scope(scope)?))
+}
+
+/// Delete a scope (`DELETE /api/scopes/{id}`).
+#[utoipa::path(delete, path = "/api/scopes/{id}", responses((status = 200)))]
+pub async fn delete_scope(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    state.storage.delete_scope(&id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Create-scope payload.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ScopeIn {
+    pub name: String,
+    pub query: String,
 }

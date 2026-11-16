@@ -12,7 +12,7 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::{
-    ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, Run, Session,
+    ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, Run, Scope, Session,
     Visualization,
 };
 use chrono::{DateTime, Utc};
@@ -88,6 +88,11 @@ pub trait Storage: Send + Sync {
     fn put_conversion_job(&self, job: ConversionJob) -> Result<ConversionJob>;
     fn get_conversion_job(&self, id: &str) -> Result<ConversionJob>;
     fn list_conversion_jobs(&self, dataset_id: &str) -> Result<Vec<ConversionJob>>;
+
+    // Scopes (saved AimQL queries)
+    fn put_scope(&self, scope: Scope) -> Result<Scope>;
+    fn list_scopes(&self) -> Result<Vec<Scope>>;
+    fn delete_scope(&self, id: &str) -> Result<()>;
 }
 
 /// Column-partitioned layout for the optional Parquet analytics layer (the
@@ -123,6 +128,7 @@ pub struct InMemoryStore {
     data_items: RwLock<HashMap<String, DataItem>>,
     item_history: RwLock<Vec<DataItemHistory>>,
     conversion_jobs: RwLock<HashMap<String, ConversionJob>>,
+    scopes: RwLock<HashMap<String, Scope>>,
 }
 
 impl InMemoryStore {
@@ -396,6 +402,29 @@ impl Storage for InMemoryStore {
             .filter(|j| j.dataset_id == dataset_id)
             .cloned()
             .collect())
+    }
+
+    fn put_scope(&self, scope: Scope) -> Result<Scope> {
+        self.scopes
+            .write()
+            .unwrap()
+            .insert(scope.id.clone(), scope.clone());
+        Ok(scope)
+    }
+
+    fn list_scopes(&self) -> Result<Vec<Scope>> {
+        let mut scopes = self.scopes.read().unwrap().values().cloned().collect::<Vec<_>>();
+        scopes.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(scopes)
+    }
+
+    fn delete_scope(&self, id: &str) -> Result<()> {
+        self.scopes
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(drop)
+            .ok_or_else(|| CoreError::NotFound(format!("scope {id}")))
     }
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 type DataItem = {
   id: string;
@@ -254,6 +255,14 @@ export default function TrainingData() {
                   <td>{item.split}</td>
                   <td style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{item.source}</td>
                   <td>
+                    <Link
+                      className="button button-ghost"
+                      to={`/visualize?text=${encodeURIComponent(
+                        item.text ?? `${item.subject ?? ""} ${item.predicate ?? ""} ${item.object ?? ""}`,
+                      )}`}
+                    >
+                      Visualize
+                    </Link>
                     <button className="button" onClick={() => void showHistory(item)}>
                       History
                     </button>

@@ -74,6 +74,9 @@ use utoipa::OpenApi;
         routes::api::item_history,
 
         routes::api::query_runs,
+        routes::api::list_scopes,
+        routes::api::create_scope,
+        routes::api::delete_scope,
 
         routes::workers::spawn_worker,
 
@@ -105,6 +108,7 @@ use utoipa::OpenApi;
         routes::workers::SpawnWorkerResponse,
 
         coach_core::model::Session,
+        coach_core::model::Scope,
 
         coach_core::model::Run,
 
@@ -224,6 +228,11 @@ fn build_router(state: AppState) -> Router {
         .route("/api/visualize_png", post(routes::workers::visualize_png_proxy))
 
         .route("/api/query", post(routes::api::query_runs))
+        .route(
+            "/api/scopes",
+            get(routes::api::list_scopes).post(routes::api::create_scope),
+        )
+        .route("/api/scopes/{id}", delete(routes::api::delete_scope))
         .route(
             "/api/datasets/{id}/conversions",
             get(routes::api::list_conversions).post(routes::api::create_conversion),

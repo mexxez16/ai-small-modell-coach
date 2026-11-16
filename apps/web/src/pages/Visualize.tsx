@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { api, RenderWorker, Run, Visualization } from "../api/client";
 
@@ -9,8 +10,10 @@ type Style = (typeof STYLES)[number];
 const SANITIZE_PROFILE = { USE_PROFILES: { svg: true, svgFilters: true, html: true } };
 
 export default function Visualize() {
+  const [searchParams] = useSearchParams();
   const [text, setText] = useState(
-    "Apple is looking at buying U.K. startup for $1 billion.",
+    searchParams.get("text") ??
+      "Apple is looking at buying U.K. startup for $1 billion.",
   );
   const [style, setStyle] = useState<Style>("ent");
   const [ents, setEnts] = useState("");

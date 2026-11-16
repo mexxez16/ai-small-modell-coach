@@ -9,14 +9,14 @@
 use crate::error::{CoreError, Result};
 use crate::model::{
     ConversionJob, DataItem, DataItemHistory, DataItemStatus, Dataset, Image, MetricPoint, Run,
-    Session, Visualization,
+    Scope, Session, Visualization,
 };
 use crate::storage::Storage;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +124,12 @@ CREATE TABLE IF NOT EXISTS conversion_jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_dataset ON conversion_jobs(dataset_id);
+CREATE TABLE IF NOT EXISTS scopes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 "#;
 
 /// SQLite-backed [`Storage`] implementation. The connection sits behind a
@@ -211,6 +217,16 @@ const ITEM_COLS: &str =
 const HISTORY_COLS: &str = "id, item_id, timestamp, actor, field, old_value, new_value";
 const JOB_COLS: &str =
     "id, dataset_id, pipeline, params, status, artifacts, stats, created_at, updated_at";
+const SCOPE_COLS: &str = "id, name, query, created_at";
+
+fn scope_from_row(row: &rusqlite::Row) -> Result<Scope> {
+    Ok(Scope {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        query: row.get(2)?,
+        created_at: str_to_ts(row.get(3)?)?,
+    })
+}
 
 fn json_col<T: serde::de::DeserializeOwned>(raw: String) -> Result<T> {
     de(raw)
@@ -1045,6 +1061,38 @@ impl Storage for SqliteStore {
             .query_map(params![dataset_id], wrap(job_from_row))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    // --- Scopes ---
+
+    fn put_scope(&self, scope: Scope) -> Result<Scope> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO scopes (id, name, query, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET name=?2, query=?3",
+            params![scope.id, scope.name, scope.query, ts_to_str(&scope.created_at)],
+        )?;
+        Ok(scope)
+    }
+
+    fn list_scopes(&self) -> Result<Vec<Scope>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SCOPE_COLS} FROM scopes ORDER BY created_at"
+        ))?;
+        let rows = stmt
+            .query_map([], wrap(scope_from_row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_scope(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        let affected = conn.execute("DELETE FROM scopes WHERE id = ?1", params![id])?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("scope {id}")));
+        }
+        Ok(())
     }
 }
 

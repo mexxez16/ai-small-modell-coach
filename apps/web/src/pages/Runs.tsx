@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { api, Run } from "../api/client";
+import { api, Run, Scope } from "../api/client";
 
 type QueryResult = {
   parsed: string;
@@ -14,7 +14,30 @@ export default function Runs() {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scopes, setScopes] = useState<Scope[]>([]);
+  const [scopeName, setScopeName] = useState("");
   const navigate = useNavigate();
+
+  const loadScopes = useCallback(() => {
+    api
+      .listScopes()
+      .then(setScopes)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(loadScopes, [loadScopes]);
+
+  const saveScope = async () => {
+    if (!query.trim() || !scopeName.trim()) return;
+    await api.saveScope(scopeName.trim(), query.trim());
+    setScopeName("");
+    loadScopes();
+  };
+
+  const applyScope = (scope: Scope) => {
+    setQuery(scope.query);
+    void runQueryFrom(scope.query);
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -29,16 +52,19 @@ export default function Runs() {
     void refresh();
   }, [refresh]);
 
-  const runQuery = async () => {
+  const runQueryWith = useCallback(async (q: string) => {
     try {
       setError(null);
-      const res = await api.queryRuns(query);
+      const res = await api.queryRuns(q);
       setResult(res);
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : String(err));
     }
-  };
+  }, []);
+
+  const runQuery = () => runQueryWith(query);
+  const runQueryFrom = (q: string) => runQueryWith(q);
 
   return (
     <div>
@@ -62,6 +88,34 @@ export default function Runs() {
         <button className="button button-primary" onClick={() => void runQuery()}>
           Query
         </button>
+      </div>
+
+      <div className="field-row">
+        <input
+          className="text-input"
+          placeholder="Scope name"
+          value={scopeName}
+          onChange={(event) => setScopeName(event.target.value)}
+          aria-label="Scope name"
+          style={{ maxWidth: 180 }}
+        />
+        <button className="button" onClick={() => void saveScope()} disabled={!query.trim() || !scopeName.trim()}>
+          Save scope
+        </button>
+        {scopes.map((scope) => (
+          <span key={scope.id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <button className="button button-ghost" onClick={() => applyScope(scope)} title={scope.query}>
+              {scope.name}
+            </button>
+            <button
+              className="button button-ghost"
+              aria-label={`delete scope ${scope.name}`}
+              onClick={() => void api.deleteScope(scope.id).then(loadScopes)}
+            >
+              x
+            </button>
+          </span>
+        ))}
       </div>
 
       {result && (

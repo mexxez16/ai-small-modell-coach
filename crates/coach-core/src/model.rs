@@ -281,3 +281,13 @@ pub struct ConversionJob {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// A saved AimQL query ("scope") — a named, shareable Runs-dashboard filter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct Scope {
+    pub id: String,
+    pub name: String,
+    pub query: String,
+    pub created_at: DateTime<Utc>,
+}

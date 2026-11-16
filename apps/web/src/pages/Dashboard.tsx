@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 
 import { api, Run } from "../api/client";
 
+type TextRow = { text: string; label: string; dataset: string; datasetId: string };
+
 type DashboardData = {
   counts: {
     sessions: number;
@@ -41,6 +43,7 @@ function flattenHparams(value: unknown, prefix = ""): Record<string, string> {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [texts, setTexts] = useState<TextRow[]>([]);
   const [metrics, setMetrics] = useState<
     Array<{ run: Run; name: string; points: Array<{ x: number; y: number }> }>
   >([]);
@@ -49,7 +52,7 @@ export default function Dashboard() {
     let cancelled = false;
     api
       .dashboard()
-      .then((d) => {
+      .then(async (d) => {
         if (cancelled) return;
         setData(d);
         // Overlay the most recent runs' most informative series — the metric
@@ -84,6 +87,26 @@ export default function Dashboard() {
         Promise.all(jobs).then((groups) => {
           if (!cancelled) setMetrics(groups.flat());
         });
+        // Texts index: first 10 items across datasets (smaller workspaces only).
+        try {
+          const ds = (await (await fetch("/api/datasets")).json()) as Array<{ id: string; name: string }>;
+          const rows = (await Promise.all(ds.map(async (d) => {
+            try {
+              const items = (await (await fetch(`/api/datasets/${d.id}/items`)).json()) as Array<Record<string, unknown>>;
+              return items.slice(0, 10).map((i) => ({
+                text: String(i.text ?? i.subject ?? ""),
+                label: String(i.label ?? ""),
+                dataset: d.name,
+                datasetId: d.id,
+              }));
+            } catch {
+              return [] as TextRow[];
+            }
+          }))).flat();
+          if (!cancelled) setTexts(rows.slice(0, 12));
+        } catch {
+          /* texts index is best-effort */
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -225,6 +248,36 @@ export default function Dashboard() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {texts.length > 0 && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Texts index</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Text</th>
+                <th>Label</th>
+                <th>Dataset</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {texts.map((t, i) => (
+                <tr key={i}>
+                  <td style={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis" }}>{t.text}</td>
+                  <td>{t.label}</td>
+                  <td>{t.dataset}</td>
+                  <td>
+                    <Link className="button button-ghost" to={`/visualize?text=${encodeURIComponent(t.text)}`}>
+                      Visualize
+                    </Link>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
