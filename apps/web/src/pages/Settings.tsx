@@ -322,6 +322,23 @@ export default function Settings() {
             Spawn worker
           </button>
         </div>
+        <div className="field-row">
+          {[
+            "en_core_web_sm",
+            "en_core_web_md",
+            "en_core_web_lg",
+            "de_core_news_md",
+            "de_core_news_lg",
+          ].map((preset) => (
+            <button
+              key={preset}
+              className="button button-ghost"
+              onClick={() => setModelPath(preset)}
+            >
+              {preset}
+            </button>
+          ))}
+        </div>
         <table className="table">
           <thead>
             <tr>

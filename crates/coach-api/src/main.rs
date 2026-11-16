@@ -165,6 +165,9 @@ fn build_router(state: AppState) -> Router {
         )
 
         .route("/api/items/{id}/history", get(routes::api::item_history))
+        .route("/api/export", get(routes::api::export_bundle))
+        .route("/api/import", post(routes::api::import_bundle))
+        .route("/api/model-candidates", get(routes::api::model_candidates))
 
         .route("/api/visualize", post(routes::workers::visualize_proxy))
 

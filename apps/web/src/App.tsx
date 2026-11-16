@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 
 import Dashboard from "./pages/Dashboard";
+import RunDetail from "./pages/RunDetail";
 import Sessions from "./pages/Sessions";
 import Runs from "./pages/Runs";
 import TrainingData from "./pages/TrainingData";
@@ -258,6 +259,7 @@ function App() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/runs/:runId" element={<RunDetail />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/training-data" element={<TrainingData />} />

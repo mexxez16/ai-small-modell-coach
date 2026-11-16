@@ -29,6 +29,17 @@ pub trait Storage: Send + Sync {
         false
     }
 
+    /// Export every entity as one JSON bundle (default: unsupported).
+    fn export_json(&self) -> Result<serde_json::Value> {
+        Err(crate::error::CoreError::NotImplemented("export".into()))
+    }
+
+    /// Import (merge by id) a bundle produced by [`Self::export_json`]
+    /// (default: unsupported).
+    fn import_json(&self, _bundle: serde_json::Value) -> Result<()> {
+        Err(crate::error::CoreError::NotImplemented("import".into()))
+    }
+
     // Sessions
     fn create_session(&self, session: Session) -> Result<Session>;
     fn get_session(&self, id: &str) -> Result<Session>;
@@ -126,6 +137,14 @@ impl Storage for InMemoryStore {
     fn snapshot_to_dir(&self, dir: &std::path::Path) -> Result<()> {
         // Delegate to the inherent implementation (same name, richer docs).
         InMemoryStore::snapshot_to_dir(self, dir)
+    }
+
+    fn export_json(&self) -> Result<serde_json::Value> {
+        InMemoryStore::export_bundle(self)
+    }
+
+    fn import_json(&self, bundle: serde_json::Value) -> Result<()> {
+        InMemoryStore::import_bundle(self, bundle)
     }
 
     fn create_session(&self, session: Session) -> Result<Session> {
@@ -624,5 +643,84 @@ mod snapshot_tests {
         assert_eq!(reloaded.get_run("r1").unwrap().name, "run");
         assert_eq!(reloaded.query_metrics("r1", None).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+
+impl InMemoryStore {
+    /// Serialize the entire store into one portable JSON bundle.
+    pub fn export_bundle(&self) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let sessions = self.sessions.read().unwrap();
+        let runs = self.runs.read().unwrap();
+        let metrics = self.metrics.read().unwrap();
+        let images = self.images.read().unwrap();
+        let visualizations = self.visualizations.read().unwrap();
+        let datasets = self.datasets.read().unwrap();
+        let data_items = self.data_items.read().unwrap();
+        let item_history = self.item_history.read().unwrap();
+        Ok(json!({
+            "format": "coach-export-1",
+            "sessions": serde_json::to_value(sessions.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+            "runs": serde_json::to_value(runs.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+            "metrics": serde_json::to_value(&*metrics).map_err(|e| CoreError::Serialization(e))?,
+            "images": serde_json::to_value(&*images).map_err(|e| CoreError::Serialization(e))?,
+            "visualizations": serde_json::to_value(&*visualizations)
+                .map_err(|e| CoreError::Serialization(e))?,
+            "datasets": serde_json::to_value(datasets.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+            "data_items": serde_json::to_value(data_items.values().collect::<Vec<_>>())
+                .map_err(|e| CoreError::Serialization(e))?,
+            "item_history": serde_json::to_value(&*item_history)
+                .map_err(|e| CoreError::Serialization(e))?,
+        }))
+    }
+
+    /// Merge a bundle into the store (by id; existing ids are replaced).
+    pub fn import_bundle(&self, bundle: serde_json::Value) -> Result<()> {
+        let list = |key: &str| -> Result<serde_json::Value> {
+            Ok(bundle.get(key).cloned().unwrap_or(serde_json::Value::Null))
+        };
+        let load = |key: &str| -> Vec<serde_json::Value> {
+            match list(key) {
+                Ok(serde_json::Value::Array(items)) => items,
+                _ => vec![],
+            }
+        };
+        for item in load("sessions").iter() {
+            let s: Session = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.sessions.write().unwrap().insert(s.id.clone(), s);
+        }
+        for item in load("runs").iter() {
+            let r: Run = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.runs.write().unwrap().insert(r.id.clone(), r);
+        }
+        for item in load("metrics").iter() {
+            let m: MetricPoint = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.metrics.write().unwrap().push(m);
+        }
+        for item in load("images").iter() {
+            let i: Image = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.images.write().unwrap().push(i);
+        }
+        for item in load("visualizations").iter() {
+            let v: Visualization = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.visualizations.write().unwrap().push(v);
+        }
+        for item in load("datasets").iter() {
+            let d: Dataset = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.datasets.write().unwrap().insert(d.id.clone(), d);
+        }
+        for item in load("data_items").iter() {
+            let i: DataItem = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.data_items.write().unwrap().insert(i.id.clone(), i);
+        }
+        for item in load("item_history").iter() {
+            let h: DataItemHistory = serde_json::from_value(item.clone()).map_err(CoreError::Serialization)?;
+            self.item_history.write().unwrap().push(h);
+        }
+        Ok(())
     }
 }

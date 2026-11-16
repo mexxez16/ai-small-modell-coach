@@ -1,12 +1,16 @@
-//! WebSocket endpoints for streams that are not yet feature-complete.
+//! WebSocket endpoints.
 //!
-//! - `/ws/metrics` — live training metric stream (echo stub)
+//! - `/ws/metrics` — live training metric stream (broadcast of ingested
+//!   points as JSON lines)
 //! - `/ws/jobs`    — conversion job progress (echo stub)
 //! Real terminal: `src/terminal.rs`, real chat: `src/chat.rs`.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::State;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
+
+use crate::state::AppState;
 
 /// Echo implementation used for the stub streams. Text frames starting with
 /// `meta:` get a structured acknowledgment; others are echoed.
@@ -37,8 +41,48 @@ async fn ws_echo(socket: WebSocket) {
     }
 }
 
-pub async fn metrics_ws(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(ws_echo)
+/// Live metric stream: every ingested MetricPoint is broadcast as one JSON
+/// text frame. Late joiners receive a `hello` marker; lagged receivers get
+/// notified instead of being dropped silently.
+pub async fn metrics_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        let mut rx = state.metric_bus.subscribe();
+        let (mut tx, mut rxin) = socket.split();
+        let _ = tx
+            .send(Message::Text(
+                serde_json::json!({"type":"hello","bus":"metrics"}).to_string().into(),
+            ))
+            .await;
+        // Send loop only; metric ingest is the producer via append_metrics.
+        loop {
+            tokio::select! {
+                frame = rxin.next() => {
+                    let Some(Ok(frame)) = frame else { break };
+                    if matches!(frame, Message::Close(_)) { break; }
+                }
+                point = rx.recv() => {
+                    match point {
+                        Ok(metrics) => {
+                            if tx.send(Message::Text(
+                                serde_json::to_string(&metrics).unwrap_or_default().into(),
+                            )).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            let _ = tx.send(Message::Text(
+                                serde_json::json!({"type":"lagged","skipped":n}).to_string().into(),
+                            )).await;
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+    })
 }
 
 pub async fn jobs_ws(ws: WebSocketUpgrade) -> Response {

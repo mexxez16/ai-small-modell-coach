@@ -36,7 +36,7 @@ pub async fn spawn_worker(
 
     // Spawn managed by the OS so the process outlives handler scope; the API
     // supervises it (health check + restart) in a later increment.
-    let python = std::env::var("COACH_PY").unwrap_or_else(|_| "python3".into());
+    let python = resolve_python();
     let mut cmd = std::process::Command::new(python);
     cmd.args(["-m", "coach_spacy.render", "--model", &body.model_path]);
     if port != 0 {
@@ -214,4 +214,27 @@ async fn probe_worker(
         .await
         .map(|r| r.status().is_success())
         .unwrap_or(false)
+}
+
+
+/// Resolve the Python interpreter that runs the render worker: explicit
+/// `COACH_PY`, then common venv layouts in the working directory, then PATH.
+fn resolve_python() -> String {
+    if let Ok(path) = std::env::var("COACH_PY") {
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    for candidate in [
+        cwd.join(".venv-coach/bin/python3"),
+        cwd.join(".venv/bin/python3"),
+        cwd.join(".venv-coach/bin/python"),
+        cwd.join(".venv/bin/python"),
+    ] {
+        if candidate.is_file() {
+            return candidate.display().to_string();
+        }
+    }
+    "python3".into()
 }

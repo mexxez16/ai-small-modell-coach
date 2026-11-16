@@ -1,7 +1,8 @@
 //! Shared application state for coach-api.
 
-use coach_core::model::RenderWorker;
+use coach_core::model::{MetricPoint, RenderWorker, WorkerStatus};
 use coach_core::storage::{InMemoryStore, Storage};
+use tokio::sync::broadcast;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -87,6 +88,9 @@ pub struct AppState {
     pub storage: Arc<dyn Storage>,
     /// Dirty flag for snapshot writer.
     dirty: Arc<std::sync::Mutex<bool>>,
+    /// Live metric fan-out for `/ws/metrics`; receivers that subscribe before
+    /// the first append see every subsequent point.
+    pub metric_bus: broadcast::Sender<MetricPoint>,
     /// Directory the storage snapshots persist to (COACH_DATA_DIR); `None`
     /// keeps the purely in-memory scaffold behavior.
     pub snapshot_dir: Option<std::path::PathBuf>,
@@ -122,6 +126,7 @@ impl AppState {
             config,
             storage: store,
             dirty: Arc::new(std::sync::Mutex::new(false)),
+            metric_bus: broadcast::channel(1024).0,
             snapshot_dir: Some(data_dir.clone()),
             workers: Arc::new(WorkerRegistry::default()),
             provider_store: Arc::new(crate::providers::ProviderStore::load(&data_dir)),

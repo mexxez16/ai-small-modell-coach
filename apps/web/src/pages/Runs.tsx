@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { api, Run } from "../api/client";
 
@@ -13,6 +14,7 @@ export default function Runs() {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     try {
@@ -85,7 +87,7 @@ export default function Runs() {
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr key={run.id}>
+              <tr key={run.id} onClick={() => navigate(`/runs/${run.id}`)} style={{ cursor: "pointer" }}>
                 <td>{run.name}</td>
                 <td>
                   <span className={`badge badge-${run.status === "completed" ? "success" : run.status === "failed" ? "danger" : "neutral"}`}>

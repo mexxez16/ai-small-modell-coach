@@ -133,6 +133,9 @@ pub async fn append_metrics(
             timestamp: p.timestamp.unwrap_or_else(now),
         })
         .collect();    state.storage.append_metric_points(&points)?;
+    for point in &points {
+        let _ = state.metric_bus.send(point.clone());
+    }
     state.mark_dirty();
     Ok(Json(json!({"accepted": points.len()})))
 }
@@ -686,4 +689,68 @@ pub async fn item_history(
     AxumPath(item_id): AxumPath<String>,
 ) -> Result<Json<Vec<DataItemHistory>>, ApiError> {
     Ok(Json(state.storage.list_item_history(&item_id)?))
+}
+
+
+// ---------------------------------------------------------------------------
+// Export / import (portable JSON bundles)
+// ---------------------------------------------------------------------------
+
+/// Export the entire store as one portable JSON bundle.
+#[utoipa::path(get, path = "/api/export", responses((status = 200)))]
+pub async fn export_bundle(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let bundle = state.storage.export_json()?;
+    Ok(Json(bundle))
+}
+
+/// Import (merge by id) a bundle produced by /api/export. Heavy: the caller
+/// posts the bundle body directly.
+#[utoipa::path(post, path = "/api/import", request_body = serde_json::Value, responses((status = 200)))]
+pub async fn import_bundle(
+    State(state): State<AppState>,
+    Json(bundle): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state.storage.import_json(bundle)?;
+    state.mark_dirty();
+    Ok(Json(json!({"status": "imported"})))
+}
+
+/// Scan a filesystem root for spaCy pipeline candidates (a dir containing
+/// meta.json + config.cfg) — used by the model picker in Settings.
+#[utoipa::path(get, path = "/api/model-candidates", params(("root" = Option<String>, Query)), responses((status = 200)))]
+pub async fn model_candidates(
+    State(state): State<AppState>,
+    axum::extract::Query(_): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    let _ = state; // scans nothing outside the workspace dir by default
+    let mut roots: Vec<std::path::PathBuf> = vec![state.workspace_dir.clone()];
+    Ok(Json(scan_model_roots(roots.pop().unwrap_or_default())))
+}
+
+/// Find spaCy pipeline candidates: directories that contain both
+/// `meta.json` and `config.cfg` up to 3 levels deep under `root`.
+fn scan_model_roots(root: std::path::PathBuf) -> Vec<String> {
+    use std::path::PathBuf;
+    let mut found = Vec::new();
+    fn is_pipeline(dir: &std::path::Path) -> bool {
+        dir.join("meta.json").is_file() && dir.join("config.cfg").is_file()
+    }
+    fn walk(dir: &std::path::Path, depth: usize, found: &mut Vec<String>) {
+        if depth > 3 || found.len() >= 20 {
+            return;
+        }
+        let entries = std::fs::read_dir(dir).ok();
+        for e in entries.into_iter().flatten().flatten() {
+            let path = e.path();
+            if is_pipeline(&path) {
+                if let Some(s) = path.to_str() {
+                    found.push(s.to_string());
+                }
+            } else if path.is_dir() {
+                walk(&path, depth + 1, found);
+            }
+        }
+    }
+    walk(&root, 0, &mut found);
+    found
 }
