@@ -10,6 +10,13 @@ type ChatFrame =
 
 type ChatMessage = { role: "user" | "assistant" | "system"; text: string };
 
+/** Strip terminal control sequences; headless providers should never emit
+ * them, but raw ANSI in the chat list is unreadable if one slips through. */
+function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-Z\\-_])/g, "");
+}
+
 /**
  * Chat dock: right-side panel, collapsible. Connects to /ws/chat; the
  * provider dropdown is fed by the provider list the backend announces on
@@ -31,6 +38,7 @@ export default function ChatDock({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"connecting" | "connected" | "closed">("connecting");
+  const [connNonce, setConnNonce] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -38,10 +46,25 @@ export default function ChatDock({
     setMessages((m) => [...m, message]);
   }, []);
 
+  // Consecutive delta frames extend the last assistant message instead of
+  // creating one bubble per chunk.
+  const appendDelta = useCallback((content: string) => {
+    setMessages((m) => {
+      const last = m[m.length - 1];
+      if (last?.role === "assistant") {
+        return [...m.slice(0, -1), { role: "assistant", text: last.text + content }];
+      }
+      return [...m, { role: "assistant", text: content }];
+    });
+  }, []);
+
   const refreshProviders = useCallback(() => {
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "providers" }));
+    } else if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+      // Stale/dead socket: re-open the connection.
+      setConnNonce((n) => n + 1);
     }
   }, []);
 
@@ -91,7 +114,7 @@ export default function ChatDock({
           break;
         }
         case "delta":
-          append({ role: "assistant", text: frame.content });
+          appendDelta(stripAnsi(frame.content));
           break;
         case "done":
           break;
@@ -102,7 +125,7 @@ export default function ChatDock({
     };
 
     return () => socket.close();
-  }, [open, append]);
+  }, [open, connNonce, append, appendDelta]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });

@@ -109,19 +109,6 @@ impl PtySession {
         }
     }
 
-    /// Wait for the child to exit (blocking; call from a worker thread) and
-    /// report its outcome: `Ok(code)` for a normal exit, `Err` when the wait
-    /// itself failed or the child could not be accessed.
-    pub fn exit_code(&self) -> Option<anyhow::Result<i32>> {
-        let mut child = self.child.lock().ok()?;
-        child
-            .wait()
-            .map(|status| status.exit_code() as i32)
-            .map_err(|e| anyhow::anyhow!("failed to wait for child: {e}"))
-            .into()
-    }
-
-    /// Non-blocking probe into how the child ended, best-effort.
     pub fn kill(&self) {
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
