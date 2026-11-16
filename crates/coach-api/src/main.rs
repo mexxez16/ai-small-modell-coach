@@ -116,15 +116,19 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::from_env();
     let app = build_router(AppState::new(config.clone())).layer(TraceLayer::new_for_http());
 
-    let (listener, port) = bind_listener(config.port).await?;
+    let (listener, port) = bind_listener(config.port, DEFAULT_PORT).await?;
     tracing::info!("coach-api listening on http://127.0.0.1:{port}");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
 /// Bind to the explicit `COACH_PORT` when set; otherwise scan upward from
-/// `DEFAULT_PORT` (8901) to avoid conflicts with other local services.
-async fn bind_listener(explicit_port: Option<u16>) -> anyhow::Result<(tokio::net::TcpListener, u16)> {
+/// `base` (the default is `DEFAULT_PORT`, 8901) to avoid conflicts with other
+/// local services.
+async fn bind_listener(
+    explicit_port: Option<u16>,
+    base: u16,
+) -> anyhow::Result<(tokio::net::TcpListener, u16)> {
     if let Some(port) = explicit_port {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         let listener = tokio::net::TcpListener::bind(addr)
@@ -133,7 +137,7 @@ async fn bind_listener(explicit_port: Option<u16>) -> anyhow::Result<(tokio::net
         return Ok((listener, port));
     }
     for offset in 0..PORT_SCAN_TRIES {
-        let port = DEFAULT_PORT + offset;
+        let port = base + offset;
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         match tokio::net::TcpListener::bind(addr).await {
             Ok(listener) => return Ok((listener, port)),
@@ -144,8 +148,8 @@ async fn bind_listener(explicit_port: Option<u16>) -> anyhow::Result<(tokio::net
         }
     }
     Err(anyhow::anyhow!(
-        "no free port found in {DEFAULT_PORT}..{}",
-        DEFAULT_PORT + PORT_SCAN_TRIES
+        "no free port found in {base}..{}",
+        base + PORT_SCAN_TRIES
     ))
 }
 
@@ -155,24 +159,29 @@ mod port_tests {
 
     #[tokio::test]
     async fn explicit_port_binds_exactly() {
-        // Off the scan range (8901..) so the two port tests never fight over
-        // the same port when run in parallel.
-        let explicit = DEFAULT_PORT + 100;
-        let (listener, port) = bind_listener(Some(explicit)).await.unwrap();
+        // Off the scan range so tests never fight over ports.
+        let explicit = 45100;
+        let (listener, port) =
+            bind_listener(Some(explicit), DEFAULT_PORT).await.unwrap();
         assert_eq!(port, explicit);
         drop(listener);
     }
 
     #[tokio::test]
-    async fn scan_skips_occupied_default_port() {
-        // Hold 8901, then bind without COACH_PORT: must land on 8902.
+    async fn scan_skips_occupied_base_port() {
+        // Ephemeral base, so the test stays independent of what runs on 8901
+        // in a developer environment (e.g. a live coach-api).
         let holder = tokio::net::TcpListener::bind(
-            std::net::SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
         )
         .await
         .unwrap();
-        let (_listener, port) = bind_listener(None).await.unwrap();
-        assert_eq!(port, DEFAULT_PORT + 1);
+        let base = holder.local_addr().unwrap().port();
+        let (_listener, port) = bind_listener(None, base).await.unwrap();
+        // The holder occupies the base port; the scan must land strictly
+        // above it (rare external grabs in the ephemeral range can only push
+        // it further up, never below).
+        assert!(port > base);
         drop(holder);
     }
 }
