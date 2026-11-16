@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Monthly spaCy compatibility probe (docs/SPACY_INTEGRATION.md).
+    - cron: "0 4 1 * *"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+
+  wheel:
+    name: abi3 wheel (py3.13) + spaCy smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          python -m pip install spacy pytest httpx maturin
+          python -m spacy download en_core_web_sm
+      - name: Build abi3 wheel
+        run: |
+          cd python
+          pip install -e .
+          cd ../crates/coach-pyo3
+          maturin build --find-interpreter
+      - name: Python smoke tests
+        run: |
+          cd python
+          pytest tests -m slow
+
+  frontend:
+    name: Frontend build + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run lint
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
