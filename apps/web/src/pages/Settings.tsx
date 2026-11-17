@@ -148,6 +148,9 @@ export default function Settings() {
   const [workers, setWorkers] = useState<RenderWorker[]>([]);
   const [modelPath, setModelPath] = useState("en_core_web_sm");
   const [error, setError] = useState<string | null>(null);
+  const [vibeModel, setVibeModel] = useState("");
+  const [vibePath, setVibePath] = useState<string | null>(null);
+  const [vibeStatus, setVibeStatus] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -155,6 +158,9 @@ export default function Settings() {
       const [p, w] = await Promise.all([api.listProviders(), api.listWorkers()]);
       setProviders(p.providers);
       setWorkers(w);
+      const vibe = await api.getVibeSettings();
+      setVibeModel(vibe.active_model ?? "");
+      setVibePath(vibe.config_path);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -199,6 +205,18 @@ export default function Settings() {
       await api.spawnWorker(modelPath);
       await refresh();
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const saveVibeModel = async () => {
+    try {
+      setError(null);
+      const vibe = await api.setVibeModel(vibeModel.trim());
+      setVibeModel(vibe.active_model);
+      setVibeStatus(`Gespeichert in ${vibe.config_path}`);
+    } catch (err) {
+      setVibeStatus(null);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -305,6 +323,43 @@ export default function Settings() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Mistral Vibe: Standard-Modell</h3>
+        <p className="stat-label">
+          Das Mistral Vibe CLI wählt sein Modell über den Eintrag{" "}
+          <code>active_model</code> in seiner eigenen Konfigurationsdatei
+          {vibePath ? <span> (<code>{vibePath}</code>)</span> : null}. Hier kannst
+          du dieses Modell lesen und überschreiben — es gilt dann für Chat und
+          Headless-Aufrufe des Vibe-Agenten (z.&#8202;B. <code>vibe -p …</code>).
+          Die CLI selbst besitzt keinen <code>--model</code>-Schalter, daher
+          schreibt der Coach direkt in die Konfiguration.
+        </p>
+        <div className="field-row">
+          <input
+            className="text-input"
+            style={{ flex: 1, fontFamily: "var(--font-mono)", minWidth: 300 }}
+            placeholder="z. B. mistral-small-latest"
+            value={vibeModel}
+            onChange={(event) => {
+              setVibeModel(event.target.value);
+              setVibeStatus(null);
+            }}
+            aria-label="Mistral Vibe Modell"
+          />
+          <button
+            className="button button-primary"
+            disabled={!vibeModel.trim()}
+            onClick={() => void saveVibeModel()}
+          >
+            Übernehmen
+          </button>
+          <button className="button button-ghost" onClick={() => void refresh()}>
+            Neu laden
+          </button>
+        </div>
+        {vibeStatus && <p className="stat-label">{vibeStatus}</p>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

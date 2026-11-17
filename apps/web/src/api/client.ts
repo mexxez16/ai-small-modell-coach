@@ -252,6 +252,17 @@ export const api = {
       `/api/settings/providers/${id}/test`,
       {},
     ),
+  getVibeSettings: () =>
+    request<{ config_path: string; config_exists: boolean; active_model: string | null }>(
+      "GET",
+      "/api/settings/vibe",
+    ),
+  setVibeModel: (activeModel: string) =>
+    request<{ config_path: string; config_exists: boolean; active_model: string }>(
+      "PUT",
+      "/api/settings/vibe",
+      { active_model: activeModel },
+    ),
   /** Proxied render endpoint; response size/content-type are validated server side. */
   visualize: (req: VisualizeRequest) =>
     request<VisualizeResponse>("POST", "/api/visualize", req),

@@ -357,6 +357,8 @@ fn build_router(state: AppState) -> Router {
 
         .route("/api/settings/providers/{id}/test", post(routes::settings::test_provider))
 
+        .route("/api/settings/vibe", get(routes::settings::get_vibe_settings).put(routes::settings::set_vibe_model))
+
         .route("/api/openapi.json", get(openapi_json))
 
         .with_state(state.clone()).layer(axum::middleware::from_fn_with_state(state.clone(), require_token));
