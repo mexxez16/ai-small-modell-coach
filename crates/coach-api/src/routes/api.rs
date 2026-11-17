@@ -72,6 +72,13 @@ pub struct CreateRun {
     pub hparams: Value,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Model (name or pipeline path) this run trains; validated to exist in
+    /// the registry only when a registry entry is referenced by name.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Dataset snapshot bound to this run (item provenance limit applies).
+    #[serde(default)]
+    pub dataset_id: Option<String>,
 }
 
 #[utoipa::path(post, path = "/api/runs", request_body = CreateRun, responses((status = 200, body = Run)))]
@@ -87,8 +94,9 @@ pub async fn create_run(
         status: RunStatus::Running,
         config: body.config,
         hparams: body.hparams,
-        dataset_id: None,
+        dataset_id: body.dataset_id,
         dataset_hash: None,
+        model: body.model,
         created_at: ts,
         updated_at: ts,
         tags: body.tags,
@@ -613,6 +621,7 @@ pub async fn create_dataset(
         created_at: now(),
         updated_at: now(),
         versions: vec![],
+        tags: vec![],
     };
     Ok(Json(state.storage.create_dataset(dataset)?))
 }
@@ -1252,6 +1261,7 @@ pub async fn chunk_source(
                         created_at: now(),
                         updated_at: now(),
                         versions: vec![],
+                        tags: vec![],
                     })?
                     .id,
             }
@@ -1834,4 +1844,84 @@ pub async fn export_dataset(
         )
         .body(axum::body::Body::from(body))
         .map_err(|e| ApiError::from(coach_core::CoreError::Io(std::io::Error::other(e))))
+}
+
+// ---------------------------------------------------------------------------
+// Model registry (spaCy pipelines ready to train)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct CreateModelEntry {
+    pub name: String,
+    pub path: String,
+    /// "shipped" | "local" | "finetuned"
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+/// List registered models (`GET /api/models`).
+#[utoipa::path(get, path = "/api/models", responses((status = 200, body = [coach_core::model::ModelEntry])))]
+pub async fn list_models(State(state): State<AppState>) -> Result<Json<Vec<coach_core::model::ModelEntry>>, ApiError> {
+    Ok(Json(state.storage.list_model_entries()?))
+}
+
+/// Register a model (`POST /api/models`) — shown in the Models workbench and
+/// selectable as a run target.
+#[utoipa::path(post, path = "/api/models", request_body = CreateModelEntry, responses((status = 200)))]
+pub async fn create_model(
+    State(state): State<AppState>,
+    Json(body): Json<CreateModelEntry>,
+) -> Result<Json<coach_core::model::ModelEntry>, ApiError> {
+    let name = body.name.trim();
+    if name.is_empty() || body.path.trim().is_empty() {
+        return Err(coach_core::CoreError::InvalidQuery("name and path are required".into()).into());
+    }
+    let entry = coach_core::model::ModelEntry {
+        id: new_id(),
+        name: name.to_string(),
+        path: body.path.trim().to_string(),
+        kind: body.kind.unwrap_or_else(|| "local".into()),
+        run_id: body.run_id,
+        notes: String::new(),
+        created_at: now(),
+    };
+    Ok(Json(state.storage.put_model_entry(entry)?))
+}
+
+/// Delete a registered model (`DELETE /api/models/{id}`).
+#[utoipa::path(delete, path = "/api/models/{id}", responses((status = 200)))]
+pub async fn delete_model(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    state.storage.delete_model_entry(&id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Update dataset tags (Training-Data-Session grouping)
+/// (`POST /api/datasets/{id}/tags`, body: {"tags": ["session:…", …]}).
+#[utoipa::path(post, path = "/api/datasets/{id}/tags", request_body = serde_json::Value, responses((status = 200)))]
+pub async fn update_dataset_tags(
+    State(state): State<AppState>,
+    AxumPath(dataset_id): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<Dataset>, ApiError> {
+    let mut dataset = state.storage.get_dataset(&dataset_id)?;
+    let tags = body
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.as_str())
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .ok_or(coach_core::CoreError::InvalidQuery(
+            "body must contain a tags array".into(),
+        ))?;
+    dataset.tags = tags;
+    Ok(Json(state.storage.update_dataset(dataset)?))
 }

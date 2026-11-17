@@ -156,3 +156,16 @@ maps to one table (`sessions`, `runs`, `metric_points`, `images`,
 `visualizations`, `datasets`, `data_items`, `item_history`,
 `conversion_jobs`). Column names follow the Rust field names in snake_case;
 nested values (hparams, options, context) are stored as JSON strings.
+
+## Model registry + run/dataset binding (schema v4)
+
+- `models`: id, name, path (spaCy hub name or pipeline dir with meta.json +
+  config.cfg), kind (shipped/local/finetuned), run_id (for finetuned
+  outputs), notes, created_at. REST: `GET/POST /api/models`,
+  `DELETE /api/models/{id}`.
+- `runs` gained a `model` column plus `dataset_id` on create — a run
+  explicitly binds Model + Training-Data-session. The Runs table exposes
+  both as filter columns; Sessions let you create runs with those picks.
+- `datasets` gained `tags`; the Training-Data-Sessions view groups datasets
+  via `session:<name>` tags (`POST /api/datasets/{id}/tags`).
+- All migrations are additive and verified against a v2 database upgrade.

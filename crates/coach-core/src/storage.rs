@@ -12,8 +12,8 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::{
-    ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, Run, Scope, Session,
-    SourceDoc, Visualization,
+    ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, ModelEntry, Run, Scope,
+    Session, SourceDoc, Visualization,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -73,6 +73,7 @@ pub trait Storage: Send + Sync {
 
     // Datasets + curation
     fn create_dataset(&self, dataset: Dataset) -> Result<Dataset>;
+    fn update_dataset(&self, dataset: Dataset) -> Result<Dataset>;
     fn get_dataset(&self, id: &str) -> Result<Dataset>;
     fn list_datasets(&self) -> Result<Vec<Dataset>>;
     fn put_data_item(&self, item: DataItem) -> Result<DataItem>;
@@ -99,6 +100,11 @@ pub trait Storage: Send + Sync {
     fn get_source_doc(&self, id: &str) -> Result<SourceDoc>;
     fn list_source_docs(&self) -> Result<Vec<SourceDoc>>;
     fn delete_source_doc(&self, id: &str) -> Result<()>;
+
+    // Model registry (spaCy pipelines the user registered)
+    fn put_model_entry(&self, entry: ModelEntry) -> Result<ModelEntry>;
+    fn list_model_entries(&self) -> Result<Vec<ModelEntry>>;
+    fn delete_model_entry(&self, id: &str) -> Result<()>;
 }
 
 /// Column-partitioned layout for the optional Parquet analytics layer (the
@@ -136,6 +142,7 @@ pub struct InMemoryStore {
     conversion_jobs: RwLock<HashMap<String, ConversionJob>>,
     scopes: RwLock<HashMap<String, Scope>>,
     source_docs: RwLock<HashMap<String, SourceDoc>>,
+    models: RwLock<HashMap<String, ModelEntry>>,
 }
 
 impl InMemoryStore {
@@ -346,6 +353,17 @@ impl Storage for InMemoryStore {
         Ok(self.datasets.read().unwrap().values().cloned().collect())
     }
 
+    fn update_dataset(&self, dataset: Dataset) -> Result<Dataset> {
+        let mut map = self.datasets.write().unwrap();
+        if !map.contains_key(&dataset.id) {
+            return Err(CoreError::NotFound(format!("dataset {}", dataset.id)));
+        }
+        let mut d = dataset;
+        d.updated_at = ts();
+        map.insert(d.id.clone(), d.clone());
+        Ok(d)
+    }
+
     fn put_data_item(&self, item: DataItem) -> Result<DataItem> {
         let mut map = self.data_items.write().unwrap();
         map.insert(item.id.clone(), item.clone());
@@ -471,6 +489,35 @@ impl Storage for InMemoryStore {
             .map(drop)
             .ok_or_else(|| CoreError::NotFound(format!("source doc {id}")))
     }
+
+    fn put_model_entry(&self, entry: ModelEntry) -> Result<ModelEntry> {
+        self.models
+            .write()
+            .unwrap()
+            .insert(entry.id.clone(), entry.clone());
+        Ok(entry)
+    }
+
+    fn list_model_entries(&self) -> Result<Vec<ModelEntry>> {
+        let mut entries: Vec<_> = self
+            .models
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(entries)
+    }
+
+    fn delete_model_entry(&self, id: &str) -> Result<()> {
+        self.models
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(drop)
+            .ok_or_else(|| CoreError::NotFound(format!("model entry {id}")))
+    }
 }
 
 #[cfg(test)]
@@ -516,6 +563,7 @@ mod tests {
             hparams: serde_json::json!({"max_steps": 2}),
             dataset_id: None,
             dataset_hash: None,
+            model: None,
             created_at: ts(),
             updated_at: ts(),
             tags: vec![],
@@ -712,6 +760,7 @@ mod snapshot_tests {
                 hparams: serde_json::json!({"lr": 0.1}),
                 dataset_id: None,
                 dataset_hash: None,
+            model: None,
                 created_at: ts(),
                 updated_at: ts(),
                 tags: vec![],

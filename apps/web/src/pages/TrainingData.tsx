@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import HelpBubble from "../components/HelpBubble";
+import { api } from "../api/client";
 import ReviewDeck from "../components/ReviewDeck";
 
 type DataItem = {
@@ -56,7 +57,9 @@ type TrainingDataProps = {
 };
 
 export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
-  const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
+  const [datasets, setDatasets] = useState<
+    Array<{ id: string; name: string; tags?: string[] }>
+  >([]);
   const [active, setActive] = useState<string>("");
   const [items, setItems] = useState<DataItem[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -90,11 +93,13 @@ export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
     issues?: Array<{ rule: string; detail: string; severity: string }>;
   } | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
+  const [sessionsSearch, setSessionsSearch] = useState("");
 
   const refresh = useCallback(async () => {
     const list = (await (await fetch("/api/datasets")).json()) as Array<{
       id: string;
       name: string;
+      tags?: string[];
     }>;
     setDatasets(list);
     if (!active && list.length > 0) setActive(list[0].id);
@@ -357,6 +362,15 @@ export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
             oder Konvertierungen zu starten.
           </p>
         </div>
+        <div className="field-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+          <input
+            className="text-input"
+            placeholder="Sessions/Gruppen filtern…"
+            value={sessionsSearch}
+            onChange={(e) => setSessionsSearch(e.target.value)}
+            style={{ width: 220 }}
+          />
+        </div>
         <div
           style={{
             display: "grid",
@@ -364,21 +378,49 @@ export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
             gap: 12,
           }}
         >
-          {datasets.map((d) => (
+          {datasets
+            .filter((d) =>
+              sessionsSearch.trim()
+                ? d.name.toLowerCase().includes(sessionsSearch.trim().toLowerCase())
+                : true,
+            )
+            .map((d) => (
             <div key={d.id} className="card">
               <h3 style={{ marginTop: 0, marginBottom: 4 }}>{d.name}</h3>
+              <div className="stat-label">
+                {d.tags?.some((t) => t.startsWith("session:"))
+                  ? `Gruppe: ${d.tags.find((t) => t.startsWith("session:"))?.slice(8)}`
+                  : null}
+              </div>
               <div className="stat-label">
                 {sessionCounts[d.id]
                   ? `${sessionCounts[d.id].total} Items · ${sessionCounts[d.id].curated} kuratiert`
                   : "lädt…"}
               </div>
-              <Link
-                className="button button-primary"
-                style={{ marginTop: 10, display: "inline-block" }}
-                to={`/training-data/runs?dataset=${d.id}`}
-              >
-                Session öffnen
-              </Link>
+              <div className="field-row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  placeholder="Gruppe setzen (session:…)"
+                  defaultValue={d.tags?.find((t) => t.startsWith("session:"))?.slice(8) ?? ""}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      const value = `session:${(event.target as HTMLInputElement).value.trim()}`;
+                      void api
+                        .updateDatasetTags(d.id, [value])
+                        .then(() => refresh());
+                    }
+                  }}
+                  title="Enter drücken zum Speichern"
+                  style={{ width: 150 }}
+                />
+                <Link
+                  className="button button-primary"
+                  style={{ display: "inline-block" }}
+                  to={`/training-data/runs?dataset=${d.id}`}
+                >
+                  Session öffnen
+                </Link>
+              </div>
             </div>
           ))}
         </div>

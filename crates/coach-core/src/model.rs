@@ -64,6 +64,9 @@ pub struct Run {
     /// sha256 of the dataset snapshot used by this run, if any.
     #[serde(default)]
     pub dataset_hash: Option<String>,
+    /// Model (name or pipeline path) this run trains.
+    #[serde(default)]
+    pub model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
@@ -142,6 +145,10 @@ pub struct Dataset {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub versions: Vec<DatasetVersion>,
+    /// Free-form grouping; the Training-Data-Sessions view uses
+    /// `session:<name>` entries to group datasets.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +301,24 @@ pub struct SourceDoc {
     /// sha256 hex of the raw content (dedup/audit).
     pub sha256: String,
     pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A registered model (spaCy pipeline) — either shipped (installed package),
+/// a local path added by the user, or a trained pipeline that came out of a
+/// run. The registry is user-managed via Settings/Models UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ModelEntry {
+    pub id: String,
+    pub name: String,
+    /// Path or spaCy-hub name used to load the pipeline.
+    pub path: String,
+    /// "shipped" | "local" | "finetuned"
+    pub kind: String,
+    /// For kind=finetuned: the run that produced this pipeline.
+    pub run_id: Option<String>,
+    pub notes: String,
     pub created_at: DateTime<Utc>,
 }
 

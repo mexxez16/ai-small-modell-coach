@@ -36,13 +36,30 @@ export default function Sessions() {
   const [comparisons, setComparisons] = useState<
     Record<string, Record<string, { latest: number; step: number; points: number }>>
   >({});
+  const [sessionsSearch, setSessionsSearch] = useState("");
+  const [runsSearch, setRunsSearch] = useState("");
+  const [runsSortDesc, setRunsSortDesc] = useState(true);
+  const [modelsList, setModelsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [datasetsList, setDatasetsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [newRunName, setNewRunName] = useState("");
+  const [newRunModel, setNewRunModel] = useState("");
+  const [newRunDataset, setNewRunDataset] = useState("");
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const [s, r] = await Promise.all([api.listSessions(), api.listRuns()]);
+      const [s, r, m, d] = await Promise.all([
+        api.listSessions(),
+        api.listRuns(),
+        api.listModels(),
+        fetch("/api/datasets").then(
+          (res) => res.json() as Promise<Array<{ id: string; name: string }>>,
+        ),
+      ]);
       setSessions(s);
       setRuns(r);
+      setModelsList(m.map((x) => ({ id: x.id, name: x.name })));
+      setDatasetsList(d);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -81,6 +98,19 @@ export default function Sessions() {
     }
   };
 
+  const createRunInSession = async (sessionId: string) => {
+    const runName = newRunName.trim() || `run-${new Date().toISOString().slice(0, 16)}`;
+    try {
+      setError(null);
+      await api.createRun(runName, sessionId, undefined, newRunModel.trim() || undefined, newRunDataset || undefined);
+      setNewRunName("");
+      await refresh();
+      setNotice(`Run "${runName}" in der Session erstellt (Status: running).`);
+    } catch (err) {
+      setError(`Run creation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const assignRun = async (runId: string, sessionId: string) => {
     try {
       await fetch(`/api/runs/${runId}/assign`, {
@@ -114,6 +144,16 @@ export default function Sessions() {
       <div className="page-header">
         <h1>Sessions</h1>
         <p>Sessions group and compare training runs. Drag a run onto a session to assign it.</p>
+      </div>
+
+      <div className="field-row" style={{ marginBottom: 8 }}>
+        <input
+          className="text-input"
+          placeholder="Sessions filtern…"
+          value={sessionsSearch}
+          onChange={(event) => setSessionsSearch(event.target.value)}
+          style={{ width: 200 }}
+        />
       </div>
 
       <div className="field-row">
@@ -189,7 +229,13 @@ export default function Sessions() {
             </tr>
           </thead>
           <tbody>
-            {sessions.map((session) => (
+            {sessions
+              .filter((session) =>
+                sessionsSearch.trim()
+                  ? session.name.toLowerCase().includes(sessionsSearch.trim().toLowerCase())
+                  : true,
+              )
+              .map((session) => (
               <tr
                 key={session.id}
                 onClick={() => setSelected(session.id)}
@@ -219,7 +265,7 @@ export default function Sessions() {
                 <td>{runsOf(session.id).length}</td>
                 <td>{new Date(session.created_at).toLocaleString()}</td>
               </tr>
-            ))}
+              ))}
             {sessions.length === 0 && !error && (
               <tr>
                 <td colSpan={4}>No sessions yet. Create one above.</td>
@@ -234,6 +280,61 @@ export default function Sessions() {
           <h3 style={{ marginTop: 0 }}>
             Runs in &ldquo;{selectedSession.name}&rdquo;
           </h3>
+          <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
+            <input
+              className="text-input"
+              placeholder="Run-Name (leer = automatisch)"
+              value={newRunName}
+              onChange={(event) => setNewRunName(event.target.value)}
+              style={{ width: 200 }}
+            />
+            <select
+              className="select"
+              value={newRunModel}
+              onChange={(event) => setNewRunModel(event.target.value)}
+              aria-label="Modell"
+            >
+              <option value="">Modell wählen…</option>
+              {modelsList.map((m) => (
+                <option key={m.id} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select"
+              value={newRunDataset}
+              onChange={(event) => setNewRunDataset(event.target.value)}
+              aria-label="Dataset"
+            >
+              <option value="">Dataset (Training Data) wählen…</option>
+              {datasetsList.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="button button-primary"
+              onClick={() => void createRunInSession(selectedSession.id)}
+            >
+              Run in dieser Session erstellen
+            </button>
+            <input
+              className="text-input"
+              placeholder="Runs filtern…"
+              value={runsSearch}
+              onChange={(event) => setRunsSearch(event.target.value)}
+              style={{ width: 160 }}
+            />
+            <button
+              className="button button-ghost"
+              onClick={() => setRunsSortDesc((v) => !v)}
+              title="Sortierung der Runs (nach run name)"
+            >
+              Sortierung: {runsSortDesc ? "Z→A" : "A→Z"}
+            </button>
+          </div>
           {runsOf(selectedSession.id).length === 0 ? (
             <p className="stat-label">
               Drag runs from the unassigned list above onto this session.

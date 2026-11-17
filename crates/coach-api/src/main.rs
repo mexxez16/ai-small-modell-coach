@@ -87,6 +87,10 @@ use utoipa::OpenApi;
         routes::api::export_dataset,
         routes::api::dataset_validation,
         routes::api::export_docbin,
+        routes::api::list_models,
+        routes::api::update_dataset_tags,
+        routes::api::create_model,
+        routes::api::delete_model,
 
         routes::workers::spawn_worker,
 
@@ -267,6 +271,15 @@ fn build_router(state: AppState) -> Router {
         .route(
             "/api/datasets/{id}/export/docbin",
             get(routes::api::export_docbin),
+        )
+        .route(
+            "/api/models",
+            get(routes::api::list_models).post(routes::api::create_model),
+        )
+        .route("/api/models/{id}", delete(routes::api::delete_model))
+        .route(
+            "/api/datasets/{id}/tags",
+            post(routes::api::update_dataset_tags),
         )
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))

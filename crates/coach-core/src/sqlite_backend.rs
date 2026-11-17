@@ -8,15 +8,15 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::{
-    ConversionJob, DataItem, DataItemHistory, DataItemStatus, Dataset, Image, MetricPoint, Run,
-    Scope, Session, SourceDoc, Visualization,
+    ConversionJob, DataItem, DataItemHistory, DataItemStatus, Dataset, Image, MetricPoint,
+    ModelEntry, Run, Scope, Session, SourceDoc, Visualization,
 };
 use crate::storage::Storage;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS scopes (
     query TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS models (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'local',
+    run_id TEXT,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_models_run ON models(run_id);
 CREATE TABLE IF NOT EXISTS source_docs (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -164,6 +174,39 @@ impl SqliteStore {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
+        // Additive migration (older dbs): runs.model column.
+        let has_model_column = {
+            let mut stmt = conn.prepare("PRAGMA table_info(runs)").ok();
+            let mut found = false;
+            if let Some(mut stmt) = stmt {
+                let names: Vec<String> = stmt
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+                found = names.iter().any(|c| c == "model");
+            }
+            found
+        };
+        if !has_model_column {
+            conn.execute_batch("ALTER TABLE runs ADD COLUMN model TEXT")?;
+        }
+        let has_tags_column = {
+            let mut stmt = conn.prepare("PRAGMA table_info(datasets)").ok();
+            let mut found = false;
+            if let Some(mut stmt) = stmt {
+                let names: Vec<String> = stmt
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+                found = names.iter().any(|c| c == "tags");
+            }
+            found
+        };
+        if !has_tags_column {
+            conn.execute_batch("ALTER TABLE datasets ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(SqliteStore {
             conn: Mutex::new(conn),
@@ -213,14 +256,14 @@ fn str_to_ts(s: String) -> Result<DateTime<Utc>> {
 
 const SESSION_COLS: &str = "id, name, description, status, created_at, updated_at, tags";
 const RUN_COLS: &str =
-    "id, name, session_id, status, config, hparams, dataset_id, dataset_hash, created_at, updated_at, tags";
+    "id, name, session_id, status, config, hparams, dataset_id, dataset_hash, model, created_at, updated_at, tags";
 const METRIC_COLS: &str = "run_id, name, context, step, epoch, value, timestamp";
 const IMAGE_COLS: &str =
     "id, run_id, session_id, name, step, epoch, png_base64, caption, meta, created_at";
 const VIZ_COLS: &str =
     "id, run_id, session_id, worker_model, text, dataset_item_id, style, options, svg, created_at";
 const DATASET_COLS: &str =
-    "id, name, source_ref, schema_version, created_at, updated_at, versions";
+    "id, name, source_ref, schema_version, created_at, updated_at, versions, tags";
 const ITEM_COLS: &str =
     "id, dataset_id, input_fields, label, kind, source, status, split, assignee, notes, updated_at";
 const HISTORY_COLS: &str = "id, item_id, timestamp, actor, field, old_value, new_value";
@@ -268,9 +311,22 @@ fn run_from_row(row: &rusqlite::Row) -> Result<Run> {
         hparams: json_col(row.get(5)?)?,
         dataset_id: row.get(6)?,
         dataset_hash: row.get(7)?,
-        created_at: str_to_ts(row.get(8)?)?,
-        updated_at: str_to_ts(row.get(9)?)?,
-        tags: json_col(row.get(10)?)?,
+        model: row.get(8)?,
+        created_at: str_to_ts(row.get(9)?)?,
+        updated_at: str_to_ts(row.get(10)?)?,
+        tags: json_col(row.get(11)?)?,
+    })
+}
+
+fn model_entry_from_row(row: &rusqlite::Row) -> Result<ModelEntry> {
+    Ok(ModelEntry {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        path: row.get(2)?,
+        kind: row.get(3)?,
+        run_id: row.get(4)?,
+        notes: row.get(5)?,
+        created_at: str_to_ts(row.get(6)?)?,
     })
 }
 
@@ -325,6 +381,10 @@ fn dataset_from_row(row: &rusqlite::Row) -> Result<Dataset> {
         created_at: str_to_ts(row.get(4)?)?,
         updated_at: str_to_ts(row.get(5)?)?,
         versions: json_col(row.get(6)?)?,
+        tags: row
+            .get::<_, Option<String>>(7)?
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default(),
     })
 }
 
@@ -441,6 +501,7 @@ impl Storage for SqliteStore {
             "data_items": collect(&*conn, ITEM_COLS, "data_items", item_from_row)?,
             "item_history": collect(&*conn, HISTORY_COLS, "item_history", history_from_row)?,
             "conversion_jobs": collect(&*conn, JOB_COLS, "conversion_jobs", job_from_row)?,
+            "models": collect(&*conn, "id, name, path, kind, run_id, notes, created_at", "models", model_entry_from_row)?,
         }))
     }
 
@@ -475,10 +536,10 @@ impl Storage for SqliteStore {
             for item in list("runs") {
                 let r: Run = serde_json::from_value(item).map_err(CoreError::Serialization)?;
                 conn.execute(
-                    "INSERT INTO runs (id, name, session_id, status, config, hparams, dataset_id, dataset_hash, created_at, updated_at, tags)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    "INSERT INTO runs (id, name, session_id, status, config, hparams, dataset_id, dataset_hash, model, created_at, updated_at, tags)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                      ON CONFLICT(id) DO UPDATE SET name=?2, session_id=?3, status=?4, config=?5, hparams=?6,
-                       dataset_id=?7, dataset_hash=?8, updated_at=?10, tags=?11",
+                       dataset_id=?7, dataset_hash=?8, model=?9, updated_at=?11, tags=?12",
                     params![
                         r.id,
                         r.name,
@@ -488,6 +549,7 @@ impl Storage for SqliteStore {
                         ser(&r.hparams),
                         r.dataset_id,
                         r.dataset_hash,
+                        r.model,
                         ts_to_str(&r.created_at),
                         ts_to_str(&r.updated_at),
                         ser(&r.tags)
@@ -557,9 +619,9 @@ impl Storage for SqliteStore {
             for item in list("datasets") {
                 let d: Dataset = serde_json::from_value(item).map_err(CoreError::Serialization)?;
                 conn.execute(
-                    "INSERT INTO datasets (id, name, source_ref, schema_version, created_at, updated_at, versions)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                     ON CONFLICT(id) DO UPDATE SET name=?2, source_ref=?3, schema_version=?4, updated_at=?6, versions=?7",
+                    "INSERT INTO datasets (id, name, source_ref, schema_version, created_at, updated_at, versions, tags)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(id) DO UPDATE SET name=?2, source_ref=?3, schema_version=?4, updated_at=?6, versions=?7, tags=?8",
                     params![
                         d.id,
                         d.name,
@@ -567,7 +629,8 @@ impl Storage for SqliteStore {
                         d.schema_version as i64,
                         ts_to_str(&d.created_at),
                         ts_to_str(&d.updated_at),
-                        ser(&d.versions)
+                        ser(&d.versions),
+                        ser(&d.tags)
                     ],
                 )?;
             }
@@ -723,8 +786,8 @@ impl Storage for SqliteStore {
     fn create_run(&self, run: Run) -> Result<Run> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO runs (id, name, session_id, status, config, hparams, dataset_id, dataset_hash, created_at, updated_at, tags)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO runs (id, name, session_id, status, config, hparams, dataset_id, dataset_hash, model, created_at, updated_at, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 run.id,
                 run.name,
@@ -734,6 +797,7 @@ impl Storage for SqliteStore {
                 ser(&run.hparams),
                 run.dataset_id,
                 run.dataset_hash,
+                run.model,
                 ts_to_str(&run.created_at),
                 ts_to_str(&run.updated_at),
                 ser(&run.tags)
@@ -770,7 +834,7 @@ impl Storage for SqliteStore {
         let mut r = run;
         r.updated_at = Utc::now();
         let affected = conn.execute(
-            "UPDATE runs SET name=?2, session_id=?3, status=?4, config=?5, hparams=?6, dataset_id=?7, dataset_hash=?8, updated_at=?9, tags=?10
+            "UPDATE runs SET name=?2, session_id=?3, status=?4, config=?5, hparams=?6, dataset_id=?7, dataset_hash=?8, model=?9, updated_at=?10, tags=?11
              WHERE id=?1",
             params![
                 r.id,
@@ -781,6 +845,7 @@ impl Storage for SqliteStore {
                 ser(&r.hparams),
                 r.dataset_id,
                 r.dataset_hash,
+                r.model,
                 ts_to_str(&r.updated_at),
                 ser(&r.tags)
             ],
@@ -927,8 +992,8 @@ impl Storage for SqliteStore {
     fn create_dataset(&self, dataset: Dataset) -> Result<Dataset> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO datasets (id, name, source_ref, schema_version, created_at, updated_at, versions)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO datasets (id, name, source_ref, schema_version, created_at, updated_at, versions, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 dataset.id,
                 dataset.name,
@@ -936,7 +1001,8 @@ impl Storage for SqliteStore {
                 dataset.schema_version as i64,
                 ts_to_str(&dataset.created_at),
                 ts_to_str(&dataset.updated_at),
-                ser(&dataset.versions)
+                ser(&dataset.versions),
+                ser(&dataset.tags)
             ],
         )
         .map_err(|e| map_unique_violation(e, "dataset", &dataset.id))?;
@@ -963,6 +1029,28 @@ impl Storage for SqliteStore {
             .query_map([], wrap(dataset_from_row))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    fn update_dataset(&self, dataset: Dataset) -> Result<Dataset> {
+        let conn = self.lock()?;
+        let mut d = dataset;
+        d.updated_at = Utc::now();
+        let affected = conn.execute(
+            "UPDATE datasets SET name=?2, source_ref=?3, schema_version=?4, updated_at=?5, versions=?6, tags=?7 WHERE id=?1",
+            params![
+                d.id,
+                d.name,
+                d.source_ref,
+                d.schema_version as i64,
+                ts_to_str(&d.updated_at),
+                ser(&d.versions),
+                ser(&d.tags)
+            ],
+        )?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("dataset {}", d.id)));
+        }
+        Ok(d)
     }
 
     fn put_data_item(&self, item: DataItem) -> Result<DataItem> {
@@ -1167,6 +1255,47 @@ impl Storage for SqliteStore {
             return Err(CoreError::NotFound(format!("source doc {id}")));
         }
         Ok(())
+        }
+
+    // --- Model registry ---
+
+    fn put_model_entry(&self, entry: ModelEntry) -> Result<ModelEntry> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO models (id, name, path, kind, run_id, notes, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET name=?2, path=?3, kind=?4, run_id=?5, notes=?6",
+            params![
+                entry.id,
+                entry.name,
+                entry.path,
+                entry.kind,
+                entry.run_id,
+                entry.notes,
+                ts_to_str(&entry.created_at)
+            ],
+        )?;
+        Ok(entry)
+    }
+
+    fn list_model_entries(&self) -> Result<Vec<ModelEntry>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, path, kind, run_id, notes, created_at FROM models ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], wrap(model_entry_from_row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_model_entry(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        let affected = conn.execute("DELETE FROM models WHERE id = ?1", params![id])?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("model entry {id}")));
+        }
+        Ok(())
     }
 }
 
@@ -1245,6 +1374,7 @@ mod tests {
             hparams: serde_json::json!({"lr": 0.001}),
             dataset_id: None,
             dataset_hash: None,
+            model: Some("en_core_web_sm".into()),
             created_at: ts(),
             updated_at: ts(),
             tags: vec![],

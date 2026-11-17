@@ -61,6 +61,11 @@ export const helpTexts: Record<string, HelpEntry> = {
     body: "Verfügbar sind alle in Settings als OpenAI-kompatibel konfigurierten Endpunkte (Mistral API, Ollama, LM Studio, llama.cpp, vLLM …). Die Auswahl erscheint leer, bis in Settings mind. ein Provider angelegt ist.",
     example: "Settings → Providers → New provider (openai_compatible)",
   },
+  "models.register": {
+    title: "Modell registrieren",
+    body: "Name + Pfad eines spaCy-Pipeline-Ordners (mit meta.json + config.cfg) oder eines installierten Hub-Pakets (z.B. en_core_web_sm). Registrierte Modelle erscheinen als Auswahloption beim Erstellen von Runs.",
+    example: "pfad: training/output/model-best",
+  },
 };
 
 /** "?"-circle with hover/focus popup. Keyboard-accessible: focus shows the

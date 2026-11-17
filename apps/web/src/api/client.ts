@@ -24,6 +24,9 @@ export type Run = {
   status: "running" | "completed" | "failed";
   config?: unknown | null;
   hparams: unknown;
+  dataset_id?: string | null;
+  dataset_hash?: string | null;
+  model?: string | null;
   created_at: string;
   updated_at: string;
   tags: string[];
@@ -83,6 +86,16 @@ export type Visualization = {
 };
 
 export type Health = { status: string; version: string };
+
+export type ModelEntry = {
+  id: string;
+  name: string;
+  path: string;
+  kind: "shipped" | "local" | "finetuned";
+  run_id?: string | null;
+  notes: string;
+  created_at: string;
+};
 
 export type SourceDoc = {
   id: string;
@@ -184,8 +197,14 @@ export const api = {
       "GET",
       sessionId ? `/api/runs?session_id=${encodeURIComponent(sessionId)}` : "/api/runs",
     ),
-  createRun: (name: string, sessionId?: string) =>
-    request<Run>("POST", "/api/runs", { name, session_id: sessionId, hparams: {} }),
+  createRun: (name: string, sessionId?: string, _tags?: string[], model?: string, datasetId?: string) =>
+    request<Run>("POST", "/api/runs", {
+      name,
+      session_id: sessionId,
+      hparams: {},
+      ...(model ? { model } : {}),
+      ...(datasetId ? { dataset_id: datasetId } : {}),
+    }),
   queryRuns: (query: string) =>
     request<{ parsed: string; matched_runs: Run[]; note: string }>("POST", "/api/query", {
       query,
@@ -231,8 +250,13 @@ export const api = {
     options?: Record<string, unknown>;
     svg: string;
   }) => request<Visualization>("POST", "/api/visualizations", payload),
-  listSources: () => request<SourceDoc[]>("GET", "/api/sources"),
-  createSource: (name: string, content: string) =>
+  listModels: () => request<ModelEntry[]>("GET", "/api/models"),
+  updateDatasetTags: (id: string, tags: string[]) =>
+    request<{ id: string; tags: string[] }>("POST", `/api/datasets/${id}/tags`, { tags }),
+  createModel: (name: string, path: string, kind?: string) =>
+    request<ModelEntry>("POST", "/api/models", { name, path, kind }),
+  deleteModel: (id: string) => request<void>("DELETE", `/api/models/${id}`),
+  listSources: () => request<SourceDoc[]>("GET", "/api/sources"),  createSource: (name: string, content: string) =>
     request<{ id: string; name: string }>("POST", "/api/sources", { name, content }),
   deleteSource: (id: string) => request<void>("DELETE", `/api/sources/${id}`),
   chunkSource: (

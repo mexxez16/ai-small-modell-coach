@@ -1,99 +1,204 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { api, ModelEntry } from "../api/client";
+import HelpBubble from "../components/HelpBubble";
 
-type ModelCandidate = {
+type CatalogRow = {
+  id: string;
   name: string;
-  source: "installed" | "workspace" | "registry";
-  version?: string;
-  summary?: string;
+  path: string;
+  kind: "shipped" | "local" | "finetuned";
+  run_id?: string | null;
+  created_at?: string;
 };
 
-/**
- * Model catalog:spaCy pipelines that can finetune.
- * Sources:
- * - workspace scan (parse any /pipeline meta.json in the project)
- * - well-known package-registered models (spaCy hub names)
- * Renders a sortable table of models with their latest metadata and links
- * into the finetuning runs view.
- */
+/** Model catalog: every spaCy pipeline that can be trained/filtered —
+ * registry entries (user-added, persisted), fake the workspace scan
+ * (auto discovered on disk), and the finetuned outputs of runs. */
 export default function ModelsPage() {
-  const [candidates, setCandidates] = useState<ModelCandidate[]>([]);
-  const [error] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [entries, setEntries] = useState<ModelEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
 
+  const [newName, setNewName] = useState("");
+  const [newPath, setNewPath] = useState("");
+  const [newKind, setNewKind] = useState("local");
+
+  const refresh = async () => {
+    try {
+      setError(null);
+      setEntries(await api.listModels());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
   useEffect(() => {
-    (async () => {
-      const found: ModelCandidate[] = [];
-      try {
-        const res = await fetch("/api/model-candidates");
-        const list = (await res.json()) as string[];
-        for (const path of list) {
-          found.push({
-            name: path.split("/").pop() ?? path,
-            source: "workspace",
-            summary: path,
-          });
-        }
-      } catch {
-        /* no candidates */
-      }
-      // Well-known spaCy pipelines shown even when not installed so the
-      // catalog doubles as a "what can I pull in" reference.
-      const registryNames = ["en_core_web_sm", "en_core_web_md", "en_core_web_lg", "de_core_news_sm", "de_core_web_lg"];
-      for (const name of registryNames) {
-        if (!found.some((c) => c.name === name)) {
-          found.push({ name, source: "registry", summary: "spaCy Hub — install via `python -m spacy download`" });
-        }
-      }
-      setCandidates(found);
-      setLoading(false);
-    })();
+    void refresh();
   }, []);
+
+  const addModel = async () => {
+    try {
+      setError(null);
+      await api.createModel(newName.trim(), newPath.trim(), newKind);
+      setNewName("");
+      setNewPath("");
+      setNotice(`Modell "${newName.trim()}" registriert.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const removeModel = async (id: string) => {
+    try {
+      await api.deleteModel(id);
+      setNotice("Modell entfernt.");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const visible = useMemo(() => {
+    let list: CatalogRow[] = entries.map((e) => ({
+      id: e.id,
+      name: e.name,
+      path: e.path,
+      kind: e.kind,
+      run_id: e.run_id,
+      created_at: e.created_at,
+    }));
+    if (search.trim()) {
+      const s = search.trim().toLowerCase();
+      list = list.filter(
+        (e) => e.name.toLowerCase().includes(s) || e.path.toLowerCase().includes(s),
+      );
+    }
+    if (kindFilter) list = list.filter((e) => e.kind === kindFilter);
+    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  }, [entries, search, kindFilter]);
 
   return (
     <div>
       <div className="page-header">
         <h1>Models</h1>
-        <p>spaCy pipelines: available for training as hosted-models or packaged pipelines.</p>
+        <p>
+          spaCy-Pipelines, die für Finetuning bereitstehen: registrierte
+          Modelle (Pfad oder Hub-Name) plus feingetunte Ergebnisse aus Runs.
+        </p>
       </div>
 
-      {error && <div style={{ color: "var(--error, #c00)" }}>{error}</div>}
-      {!loading && candidates.length === 0 && (
-        <div className="stat-label">No models found.</div>
-      )}
+      {error && <div className="empty-state">{error}</div>}
+      {notice && <div className="stat-label">{notice}</div>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>
+          Modell registrieren <HelpBubble helpId="models.register" />
+        </h3>
+        <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          <input
+            className="text-input"
+            placeholder="Anzeigename, z.B. english-small"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            style={{ width: 200 }}
+          />
+          <input
+            className="text-input"
+            placeholder="Pfad oder Modname (z.B. en_core_web_sm) "
+            value={newPath}
+            onChange={(e) => setNewPath(e.target.value)}
+            style={{ width: 280, fontFamily: "var(--font-mono)" }}
+          />
+          <select
+            className="select"
+            value={newKind}
+            onChange={(e) => setNewKind(e.target.value)}
+            aria-label="Modelltyp"
+          >
+            <option value="local">Lokal (Pfad)</option>
+            <option value="shipped">Installiert (spaCy Hub)</option>
+            <option value="finetuned">Feingetunt</option>
+          </select>
+          <button
+            className="button button-primary"
+            disabled={!newName.trim() || !newPath.trim()}
+            onClick={() => void addModel()}
+          >
+            Hinzufügen
+          </button>
+        </div>
+        <p className="stat-label" style={{ marginTop: 8 }}>
+          Modellordner öffnen: Der Pfad steht in der Tabelle unten — kopiere ihn
+          und öffne ihn im Dateimanager. Aus dem Browser heraus ist kein
+          Direktöffnen möglich (Sicherheitsmodell).
+        </p>
+      </div>
+
+      <div className="field-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+        <input
+          className="text-input"
+          placeholder="Name oder Pfad filtern…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: 220 }}
+        />
+        <select
+          className="select"
+          value={kindFilter}
+          onChange={(e) => setKindFilter(e.target.value)}
+          aria-label="Typ-Filter"
+        >
+          <option value="">Typ: alle</option>
+          <option value="local">Lokal</option>
+          <option value="shipped">Installiert</option>
+          <option value="finetuned">Feingetunt</option>
+        </select>
+      </div>
 
       <table className="table">
         <thead>
           <tr>
             <th>Name</th>
-            <th>Source</th>
-            <th>Details</th>
+            <th>Typ</th>
+            <th>Pfad</th>
+            <th>Quelle (Run)</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {candidates.map((model) => (
-            <tr key={model.name}>
+          {visible.map((model) => (
+            <tr key={model.id}>
               <td style={{ fontWeight: 600 }}>{model.name}</td>
               <td>
-                <span
-                  className={
-                    model.source === "workspace"
-                      ? "badge badge-success"
-                      : "badge badge-neutral"
-                  }
-                >
-                  {model.source}
-                </span>
+                <span className="badge badge-neutral">{model.kind}</span>
               </td>
-              <td>{model.summary}</td>
+              <td
+                style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
+                title="Kopieren: Klick"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(model.path);
+                  setNotice("Pfad kopiert.");
+                }}
+              >
+                {model.path}
+              </td>
+              <td style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                {model.run_id ? `${model.run_id.slice(0, 8)}…` : "—"}
+              </td>
               <td>
-                <Link className="button" to={`/training-data/sessions`}>
-                  Mit Modell starten
-                </Link>
+                <button className="button button-ghost" onClick={() => void removeModel(model.id)}>
+                  Entfernen
+                </button>
               </td>
             </tr>
           ))}
+          {visible.length === 0 && (
+            <tr>
+              <td colSpan={5}>Keine Modelle registriert.</td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
