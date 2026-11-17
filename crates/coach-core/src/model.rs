@@ -331,3 +331,37 @@ pub struct Scope {
     pub query: String,
     pub created_at: DateTime<Utc>,
 }
+
+/// A training-data session groups TD-runs (curation pipelines) so their
+/// outputs can be referenced together by finetuning runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DataSession {
+    pub id: String,
+    pub name: String,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A training-data run: a fully configurable curation pipeline from sources
+/// (e.g. SSOT copies) to a curated dataset. Stages are user-defined
+/// (`config.stages`); each execution records per-stage stats in `results`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DataRun {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub name: String,
+    /// "draft" | "completed" | "failed"
+    pub status: String,
+    /// Stage list in execution order; each stage:
+    /// { kind: "ssot_import"|"chunk"|"ai_annotate"|"export", config: {...} }
+    pub stages: serde_json::Value,
+    /// Dataset holding the produced items.
+    pub dataset_id: Option<String>,
+    /// Per-stage execution results (counts, skipped, artifacts).
+    pub results: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}

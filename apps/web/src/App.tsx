@@ -11,6 +11,9 @@ import Sessions from "./pages/Sessions";
 import Runs from "./pages/Runs";
 import ModelsPage from "./pages/Models";
 import TrainingData from "./pages/TrainingData";
+import DataSessions from "./pages/DataSessions";
+import DataSessionDetail from "./pages/DataSessionDetail";
+import DataRuns from "./pages/DataRuns";
 import Visualize from "./pages/Visualize";
 import Images from "./pages/Images";
 import Settings from "./pages/Settings";
@@ -274,8 +277,11 @@ function App() {
         <Route path="/sessions" element={<Sessions />} />
         <Route path="/runs" element={<Runs />} />
         <Route path="/models" element={<ModelsPage />} />
-        <Route path="/training-data/sessions" element={<TrainingData mode="sessions" />} />
-        <Route path="/training-data/runs" element={<TrainingData mode="runs" />} />
+        <Route path="/training-data" element={<TrainingData mode="runs" />} />
+        <Route path="/training-data/sessions" element={<DataSessions />} />
+        <Route path="/training-data/sessions/:id" element={<DataSessionDetail />} />
+        <Route path="/training-data/runs" element={<DataRuns />} />
+        <Route path="/training-data/runs/:runId" element={<DataRuns />} />
         <Route path="/visualize" element={<Visualize />} />
         <Route path="/images" element={<Images />} />
         <Route path="/settings" element={<Settings />} />

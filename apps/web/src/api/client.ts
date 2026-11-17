@@ -153,6 +153,31 @@ export type DashboardData = {
   params: Array<{ id: string; name: string; status: string; hparams: unknown }>;
 };
 
+export type DataSession = {
+  id: string;
+  name: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DataRunStage = {
+  kind: "ssot_import" | "chunk" | "ai_annotate" | "export";
+  config: Record<string, unknown>;
+};
+
+export type DataRun = {
+  id: string;
+  session_id: string | null;
+  name: string;
+  status: "draft" | "completed" | "failed" | "running";
+  stages: DataRunStage[];
+  dataset_id: string | null;
+  results: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export class ApiError extends Error {
@@ -275,4 +300,38 @@ export const api = {
     instruction?: string;
     labels?: string[];
   }) => request<AnnotateResponse>("POST", "/api/annotations", payload),
+  // --- Training-data sessions + runs (curation pipeline) ------------------
+  listDataSessions: () => request<DataSession[]>("GET", "/api/data-sessions"),
+  createDataSession: (name: string, notes = "") =>
+    request<DataSession>("POST", "/api/data-sessions", { name, notes }),
+  deleteDataSession: (id: string) =>
+    request<void>("DELETE", `/api/data-sessions/${id}`),
+  listDataSessionRuns: (id: string) =>
+    request<DataRun[]>("GET", `/api/data-sessions/${id}/runs`),
+  listDataRuns: (sessionId?: string) =>
+    request<DataRun[]>(
+      "GET",
+      sessionId
+        ? `/api/data-runs?session_id=${encodeURIComponent(sessionId)}`
+        : "/api/data-runs",
+    ),
+  getDataRun: (id: string) => request<DataRun>("GET", `/api/data-runs/${id}`),
+  createDataRun: (
+    name: string,
+    sessionId?: string,
+    stages: DataRunStage[] = [],
+    datasetId?: string,
+  ) =>
+    request<DataRun>("POST", "/api/data-runs", {
+      name,
+      ...(sessionId ? { session_id: sessionId } : {}),
+      stages,
+      ...(datasetId ? { dataset_id: datasetId } : {}),
+    }),
+  updateDataRun: (
+    id: string,
+    patch: { name?: string; session_id?: string; stages?: DataRunStage[] },
+  ) => request<DataRun>("PUT", `/api/data-runs/${id}`, patch),
+  deleteDataRun: (id: string) => request<void>("DELETE", `/api/data-runs/${id}`),
+  executeDataRun: (id: string) => request<DataRun>("POST", `/api/data-runs/${id}/execute`),
 };

@@ -12,8 +12,8 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::{
-    ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, ModelEntry, Run, Scope,
-    Session, SourceDoc, Visualization,
+    ConversionJob, DataItem, DataItemHistory, DataRun, DataSession, Dataset, Image, MetricPoint,
+    ModelEntry, Run, Scope, Session, SourceDoc, Visualization,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -105,6 +105,16 @@ pub trait Storage: Send + Sync {
     fn put_model_entry(&self, entry: ModelEntry) -> Result<ModelEntry>;
     fn list_model_entries(&self) -> Result<Vec<ModelEntry>>;
     fn delete_model_entry(&self, id: &str) -> Result<()>;
+
+    // Training-data sessions + runs (curation pipelines)
+    fn put_data_session(&self, session: DataSession) -> Result<DataSession>;
+    fn get_data_session(&self, id: &str) -> Result<DataSession>;
+    fn list_data_sessions(&self) -> Result<Vec<DataSession>>;
+    fn delete_data_session(&self, id: &str) -> Result<()>;
+    fn put_data_run(&self, run: DataRun) -> Result<DataRun>;
+    fn get_data_run(&self, id: &str) -> Result<DataRun>;
+    fn list_data_runs(&self, session_id: Option<&str>) -> Result<Vec<DataRun>>;
+    fn delete_data_run(&self, id: &str) -> Result<()>;
 }
 
 /// Column-partitioned layout for the optional Parquet analytics layer (the
@@ -143,6 +153,8 @@ pub struct InMemoryStore {
     scopes: RwLock<HashMap<String, Scope>>,
     source_docs: RwLock<HashMap<String, SourceDoc>>,
     models: RwLock<HashMap<String, ModelEntry>>,
+    data_sessions: RwLock<HashMap<String, DataSession>>,
+    data_runs: RwLock<HashMap<String, DataRun>>,
 }
 
 impl InMemoryStore {
@@ -517,6 +529,81 @@ impl Storage for InMemoryStore {
             .remove(id)
             .map(drop)
             .ok_or_else(|| CoreError::NotFound(format!("model entry {id}")))
+        }
+
+    fn put_data_session(&self, session: DataSession) -> Result<DataSession> {
+        self.data_sessions
+            .write()
+            .unwrap()
+            .insert(session.id.clone(), session.clone());
+        Ok(session)
+    }
+
+    fn get_data_session(&self, id: &str) -> Result<DataSession> {
+        self.data_sessions
+            .read()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound(format!("data session {id}")))
+    }
+
+    fn list_data_sessions(&self) -> Result<Vec<DataSession>> {
+        let mut list: Vec<_> = self
+            .data_sessions
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(list)
+    }
+
+    fn delete_data_session(&self, id: &str) -> Result<()> {
+        self.data_sessions
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(drop)
+            .ok_or_else(|| CoreError::NotFound(format!("data session {id}")))
+    }
+
+    fn put_data_run(&self, run: DataRun) -> Result<DataRun> {
+        self.data_runs
+            .write()
+            .unwrap()
+            .insert(run.id.clone(), run.clone());
+        Ok(run)
+    }
+
+    fn get_data_run(&self, id: &str) -> Result<DataRun> {
+        self.data_runs
+            .read()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound(format!("data run {id}")))
+    }
+
+    fn list_data_runs(&self, session_id: Option<&str>) -> Result<Vec<DataRun>> {
+        Ok(self
+            .data_runs
+            .read()
+            .unwrap()
+            .values()
+            .filter(|r| session_id.is_none_or(|s| r.session_id.as_deref() == Some(s)))
+            .cloned()
+            .collect())
+    }
+
+    fn delete_data_run(&self, id: &str) -> Result<()> {
+        self.data_runs
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(drop)
+            .ok_or_else(|| CoreError::NotFound(format!("data run {id}")))
     }
 }
 

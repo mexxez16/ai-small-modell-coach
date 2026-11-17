@@ -12,12 +12,14 @@ type DashboardData = {
     runs_running: number;
     runs_completed: number;
     runs_failed: number;
+    runs_stalled?: number;
     datasets: number;
     data_items: number;
     images: number;
     visualizations: number;
   };
   recent_runs: Run[];
+  live_status?: Record<string, string>;
   metric_names: string[];
   params: Array<{ id: string; name: string; status: string; hparams: unknown }>;
 };
@@ -50,6 +52,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
+    const load = () => {
     api
       .dashboard()
       .then(async (d) => {
@@ -111,9 +114,17 @@ export default function Dashboard() {
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       });
-    return () => {
-      cancelled = true;
-    };
+  };
+
+  // Live view: re-fetch the summary (and run liveness) every 15 s.
+  load();
+  const timer = window.setInterval(() => {
+    if (!cancelled) load();
+  }, 15000);
+  return () => {
+    cancelled = true;
+    window.clearInterval(timer);
+  };
   }, []);
 
   if (error) {
@@ -160,7 +171,7 @@ export default function Dashboard() {
       <div className="card-grid">
         <div className="card">
           <p className="stat-value">{c.runs_total}</p>
-          <p className="stat-label">Runs ({c.runs_running} running · {c.runs_completed} done · {c.runs_failed} failed)</p>
+          <p className="stat-label">Runs ({c.runs_running} running · {c.runs_completed} done · {c.runs_failed} failed{c.runs_stalled ? ` · ${c.runs_stalled} stalled` : ""})</p>
         </div>
         <div className="card">
           <p className="stat-value">{c.sessions}</p>
@@ -187,7 +198,9 @@ export default function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {data.recent_runs.map((run) => (
+            {data.recent_runs.map((run) => {
+              const shownStatus = data.live_status?.[run.id] ?? run.status;
+              return (
               <tr key={run.id}>
                 <td>
                   <Link to={`/runs/${run.id}`}>{run.name}</Link>
@@ -195,19 +208,22 @@ export default function Dashboard() {
                 <td>
                   <span
                     className={`badge badge-${
-                      run.status === "completed"
+                      shownStatus === "completed"
                         ? "success"
-                        : run.status === "failed"
+                        : shownStatus === "failed"
                           ? "danger"
-                          : "neutral"
+                          : shownStatus === "running"
+                            ? "primary"
+                            : "neutral"
                     }`}
                   >
-                    {run.status}
+                    {shownStatus}
                   </span>
                 </td>
                 <td>{new Date(run.created_at).toLocaleString()}</td>
               </tr>
-            ))}
+              );
+            })}
             {data.recent_runs.length === 0 && (
               <tr>
                 <td colSpan={3}>No runs yet — train a spaCy pipeline with the coach logger.</td>

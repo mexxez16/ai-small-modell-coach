@@ -7,6 +7,7 @@ use coach_core::model::{
 };
 
 use coach_core::query::{self, Query};
+use coach_core::CoreError;
 use serde_json::{json, Value};
 
 use crate::api_error::ApiError;
@@ -546,12 +547,38 @@ pub async fn dashboard_summary(
     let visualizations = state.storage.list_visualizations(None)?.len();
     let metric_names = state.storage.list_metric_names()?;
 
+    let recent_window = chrono::Duration::minutes(10);
+    let now_ts = chrono::Utc::now();
+    // A run only counts as "running" if it recently showed a heartbeat
+    // (updated_at within the window); otherwise it is reported as "stalled"
+    // so the dashboard never claims activity that isn't verifiable.
+    let live_status = |r: &Run| -> String {
+        if r.status != coach_core::model::RunStatus::Running {
+            return format!("{:?}", r.status).to_lowercase();
+        }
+        if now_ts.signed_duration_since(r.updated_at) < recent_window {
+            "running".into()
+        } else {
+            "stalled".into()
+        }
+    };
+    let mut runs_running = 0usize;
+    let mut runs_stalled = 0usize;
+    for r in &runs {
+        match live_status(r).as_str() {
+            "running" => runs_running += 1,
+            "stalled" => runs_stalled += 1,
+            _ => {}
+        }
+    }
+
     let recent = runs.iter().take(6).cloned().collect::<Vec<_>>();
     Ok(Json(json!({
         "counts": {
             "sessions": sessions.len(),
             "runs_total": runs.len(),
-            "runs_running": by_status(coach_core::model::RunStatus::Running),
+            "runs_running": runs_running,
+            "runs_stalled": runs_stalled,
             "runs_completed": by_status(coach_core::model::RunStatus::Completed),
             "runs_failed": by_status(coach_core::model::RunStatus::Failed),
             "datasets": datasets.len(),
@@ -560,6 +587,7 @@ pub async fn dashboard_summary(
             "visualizations": visualizations,
         },
         "recent_runs": recent,
+        "live_status": runs.iter().take(20).map(|r| (r.id.clone(), json!(live_status(r)))).collect::<serde_json::Map<_, _>>(),
         "metric_names": metric_names,
         "params": runs.iter().take(20).map(|r| json!({
             "id": r.id,
@@ -1376,6 +1404,15 @@ pub async fn annotate_items(
     State(state): State<AppState>,
     Json(body): Json<AnnotateRequest>,
 ) -> Result<Json<AnnotateResponse>, ApiError> {
+    Ok(Json(annotate_items_core(state, body).await?))
+}
+
+/// Shared annotation engine used by the HTTP handler and by data-run
+/// `ai_annotate` stages.
+pub async fn annotate_items_core(
+    state: AppState,
+    body: AnnotateRequest,
+) -> Result<AnnotateResponse, CoreError> {
     use coach_core::model::{DataItemHistory, DataItemStatus};
 
     let provider = state.provider_store.get(&body.provider_id).ok_or_else(|| {
@@ -1549,11 +1586,25 @@ pub async fn annotate_items(
         annotated += 1;
     }
 
-    Ok(Json(AnnotateResponse {
+    Ok(AnnotateResponse {
         annotated,
         failed,
         errors,
-    }))
+    })
+}
+
+/// Execute the annotation engine for a data-run `ai_annotate` stage. The
+/// payload is the same shape as the `/api/annotations` request; labels an
+/// an empty item list are the caller's responsibility.
+pub async fn annotate_items_blocking(
+    state: AppState,
+    payload: Value,
+) -> Result<Value, CoreError> {
+    let request: AnnotateRequest = serde_json::from_value(payload)
+        .map_err(|e| CoreError::InvalidQuery(format!("invalid annotate payload: {e}")))?;
+    let response = annotate_items_core(state, request).await?;
+    serde_json::to_value(response)
+        .map_err(|e| CoreError::Serialization(e))
 }
 
 fn truncate_text(text: &str, max: usize) -> String {
@@ -1815,8 +1866,20 @@ pub async fn export_dataset(
         }
     }
     for item in &items {
+        // Pair items serialize as subject <SEP> predicate <SEP> object —
+        // the surface form spaCy CLI and the DocBin worker expect.
+        let text = if format!("{:?}", item.kind).to_lowercase() == "pair" {
+            format!(
+                "{} <SEP> {} <SEP> {}",
+                item.input_fields.subject.as_deref().unwrap_or(""),
+                item.input_fields.predicate.as_deref().unwrap_or(""),
+                item.input_fields.object.as_deref().unwrap_or(""),
+            )
+        } else {
+            item.input_fields.text.clone().unwrap_or_default()
+        };
         let line = json!({
-            "text": item.input_fields.text.clone().unwrap_or_default(),
+            "text": text,
             "label": item.label,
             "type": "textcat",
             "meta": {

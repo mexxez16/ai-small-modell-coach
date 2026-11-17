@@ -92,6 +92,18 @@ use utoipa::OpenApi;
         routes::api::create_model,
         routes::api::delete_model,
 
+        routes::dataruns::create_data_session,
+        routes::dataruns::list_data_sessions,
+        routes::dataruns::get_data_session,
+        routes::dataruns::delete_data_session,
+        routes::dataruns::list_data_session_runs,
+        routes::dataruns::create_data_run,
+        routes::dataruns::list_data_runs,
+        routes::dataruns::get_data_run,
+        routes::dataruns::update_data_run,
+        routes::dataruns::delete_data_run,
+        routes::dataruns::execute_data_run,
+
         routes::workers::spawn_worker,
 
         routes::workers::list_workers,
@@ -281,6 +293,21 @@ fn build_router(state: AppState) -> Router {
             "/api/datasets/{id}/tags",
             post(routes::api::update_dataset_tags),
         )
+
+        .route("/api/data-sessions", get(routes::dataruns::list_data_sessions).post(routes::dataruns::create_data_session))
+        .route(
+            "/api/data-sessions/{id}",
+            get(routes::dataruns::get_data_session).delete(routes::dataruns::delete_data_session),
+        )
+        .route("/api/data-sessions/{id}/runs", get(routes::dataruns::list_data_session_runs))
+        .route("/api/data-runs", get(routes::dataruns::list_data_runs).post(routes::dataruns::create_data_run))
+        .route(
+            "/api/data-runs/{id}",
+            get(routes::dataruns::get_data_run)
+                .put(routes::dataruns::update_data_run)
+                .delete(routes::dataruns::delete_data_run),
+        )
+        .route("/api/data-runs/{id}/execute", post(routes::dataruns::execute_data_run))
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
 

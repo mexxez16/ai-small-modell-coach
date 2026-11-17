@@ -66,6 +66,11 @@ export const helpTexts: Record<string, HelpEntry> = {
     body: "Name + Pfad eines spaCy-Pipeline-Ordners (mit meta.json + config.cfg) oder eines installierten Hub-Pakets (z.B. en_core_web_sm). Registrierte Modelle erscheinen als Auswahloption beim Erstellen von Runs.",
     example: "pfad: training/output/model-best",
   },
+  "data-runs.pipeline": {
+    title: "Was ist ein Data-Run?",
+    body: "Ein Data-Run ist eine frei konfigurierbare Pipeline: Stages laufen in fester Reihenfolge — ssot_import (strukturierter JSON-Import mit Entities/Relations → Examples/Negatives/Contrastives/Tripel), chunk (Text in Chunks zerlegen), ai_annotate (KI klassifiziert Items als Entwurf, nichts wird auto-approved) und export (per-Head-JSONL-Artefakte). Jede Ausführung schreibt Kennzahlen und übersprungene Datensätze ins Run-Ergebnis.",
+    example: "ssot_import → chunk → ai_annotate → export\nAusführen erzeugt ein Dataset, das im Finetuning-Run als Dataset wählbar ist.",
+  },
 };
 
 /** "?"-circle with hover/focus popup. Keyboard-accessible: focus shows the

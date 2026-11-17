@@ -8,15 +8,15 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::{
-    ConversionJob, DataItem, DataItemHistory, DataItemStatus, Dataset, Image, MetricPoint,
-    ModelEntry, Run, Scope, Session, SourceDoc, Visualization,
+    ConversionJob, DataItem, DataItemHistory, DataItemStatus, DataRun, DataSession, Dataset,
+    Image, MetricPoint, ModelEntry, Run, Scope, Session, SourceDoc, Visualization,
 };
 use crate::storage::Storage;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +124,25 @@ CREATE TABLE IF NOT EXISTS conversion_jobs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_dataset ON conversion_jobs(dataset_id);
+CREATE TABLE IF NOT EXISTS data_sessions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS data_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    stages TEXT NOT NULL DEFAULT '[]',
+    dataset_id TEXT,
+    results TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_runs_session ON data_runs(session_id);
 CREATE TABLE IF NOT EXISTS scopes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -318,6 +337,30 @@ fn run_from_row(row: &rusqlite::Row) -> Result<Run> {
     })
 }
 
+fn data_session_from_row(row: &rusqlite::Row) -> Result<DataSession> {
+    Ok(DataSession {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        notes: row.get(2)?,
+        created_at: str_to_ts(row.get(3)?)?,
+        updated_at: str_to_ts(row.get(4)?)?,
+    })
+}
+
+fn data_run_from_row(row: &rusqlite::Row) -> Result<DataRun> {
+    Ok(DataRun {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        name: row.get(2)?,
+        status: row.get(3)?,
+        stages: json_col(row.get(4)?)?,
+        dataset_id: row.get(5)?,
+        results: json_col(row.get(6)?)?,
+        created_at: str_to_ts(row.get(7)?)?,
+        updated_at: str_to_ts(row.get(8)?)?,
+    })
+}
+
 fn model_entry_from_row(row: &rusqlite::Row) -> Result<ModelEntry> {
     Ok(ModelEntry {
         id: row.get(0)?,
@@ -502,6 +545,8 @@ impl Storage for SqliteStore {
             "item_history": collect(&*conn, HISTORY_COLS, "item_history", history_from_row)?,
             "conversion_jobs": collect(&*conn, JOB_COLS, "conversion_jobs", job_from_row)?,
             "models": collect(&*conn, "id, name, path, kind, run_id, notes, created_at", "models", model_entry_from_row)?,
+            "data_sessions": collect(&*conn, "id, name, notes, created_at, updated_at", "data_sessions", data_session_from_row)?,
+            "data_runs": collect(&*conn, "id, session_id, name, status, stages, dataset_id, results, created_at, updated_at", "data_runs", data_run_from_row)?,
         }))
     }
 
@@ -1294,6 +1339,111 @@ impl Storage for SqliteStore {
         let affected = conn.execute("DELETE FROM models WHERE id = ?1", params![id])?;
         if affected == 0 {
             return Err(CoreError::NotFound(format!("model entry {id}")));
+        }
+        Ok(())
+        }
+
+    // --- Training-data sessions + runs ---
+
+    fn put_data_session(&self, session: DataSession) -> Result<DataSession> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO data_sessions (id, name, notes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET name=?2, notes=?3",
+            params![
+                session.id,
+                session.name,
+                session.notes,
+                ts_to_str(&session.created_at),
+                ts_to_str(&session.updated_at)
+            ],
+        )?;
+        Ok(session)
+    }
+
+    fn get_data_session(&self, id: &str) -> Result<DataSession> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id, name, notes, created_at, updated_at FROM data_sessions WHERE id = ?1",
+            params![id],
+            wrap(data_session_from_row),
+        )
+        .optional()?
+        .ok_or_else(|| CoreError::NotFound(format!("data session {id}")))
+    }
+
+    fn list_data_sessions(&self) -> Result<Vec<DataSession>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, notes, created_at, updated_at FROM data_sessions ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], wrap(data_session_from_row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_data_session(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        let affected = conn.execute("DELETE FROM data_sessions WHERE id = ?1", params![id])?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("data session {id}")));
+        }
+        Ok(())
+    }
+
+    fn put_data_run(&self, run: DataRun) -> Result<DataRun> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO data_runs (id, session_id, name, status, stages, dataset_id, results, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET session_id=?2, name=?3, status=?4, stages=?5,
+               dataset_id=?6, results=?7, updated_at=?9",
+            params![
+                run.id,
+                run.session_id,
+                run.name,
+                run.status,
+                ser(&run.stages),
+                run.dataset_id,
+                ser(&run.results),
+                ts_to_str(&run.created_at),
+                ts_to_str(&run.updated_at)
+            ],
+        )?;
+        Ok(run)
+    }
+
+    fn get_data_run(&self, id: &str) -> Result<DataRun> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT id, session_id, name, status, stages, dataset_id, results, created_at, updated_at
+             FROM data_runs WHERE id = ?1",
+            params![id],
+            wrap(data_run_from_row),
+        )
+        .optional()?
+        .ok_or_else(|| CoreError::NotFound(format!("data run {id}")))
+    }
+
+    fn list_data_runs(&self, session_id: Option<&str>) -> Result<Vec<DataRun>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, session_id, name, status, stages, dataset_id, results, created_at, updated_at
+             FROM data_runs WHERE (?1 IS NULL OR session_id = ?1) ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![session_id], wrap(data_run_from_row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_data_run(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        let affected = conn.execute("DELETE FROM data_runs WHERE id = ?1", params![id])?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("data run {id}")));
         }
         Ok(())
     }
