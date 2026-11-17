@@ -13,8 +13,8 @@ export type HelpEntry = {
 export const helpTexts: Record<string, HelpEntry> = {
   "train-data.sources": {
     title: "Was ist eine Quelle?",
-    body: "Eine Quelle ist ein hochgeladenes Dokument (Text, Markdown, JSON, SSOT-Export). Sie wird mit sha256 gespeichert und ist die Basis für das Chunking — nichts landet ohne nachvollziehbare Herkunft im Datensatz.",
-    example: 'POST /api/sources  { name: "BFO_SSOT.txt", content: "..." }',
+    body: "Eine Quelle ist ein hochgeladenes Dokument (Text, Markdown, JSON). Sie wird mit sha256 gespeichert und ist die Basis für das Chunking — nichts landet ohne nachvollziehbare Herkunft im Datensatz.",
+    example: 'POST /api/sources  { name: "meine-notizen.txt", content: "..." }',
   },
   "train-data.chunking": {
     title: "Chunking-Regeln",

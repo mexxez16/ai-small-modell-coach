@@ -386,14 +386,14 @@ export default function TrainingData() {
         <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
           <input
             className="input"
-            placeholder="Quellname, z.B. BFO_SSOT.txt"
+            placeholder="Quellname, z.B. mein-dokument.txt"
             value={sourceName}
             onChange={(e) => setSourceName(e.target.value)}
             style={{ width: 220 }}
           />
           <textarea
             className="input"
-            placeholder="Dokument hier einfügen — oder Datei unten laden (Text, Markdown, JSON, SSOT-Export)"
+            placeholder="Dokument hier einfügen — oder Datei unten laden (Text, Markdown, JSON)"
             value={sourceContent}
             onChange={(e) => setSourceContent(e.target.value)}
             style={{ width: "100%", minHeight: 80 }}

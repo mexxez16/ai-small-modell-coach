@@ -308,18 +308,27 @@ export default function Settings() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0 }}>Render workers</h3>
+        <h3 style={{ marginTop: 0 }}>Visualisierung: spaCy Render-Dienste</h3>
+        <p className="stat-label">
+          Ein Render-Dienst ist ein lokaler Python-Prozess, der ein spaCy-Modell lädt und
+          Dokumente als displaCy-Grafik (Entitäten, Dependency-Bäume, Spans) zeichnet.
+          Er wird von der Seite „Visualize“ und dem Export „.spacy“ benutzt. Man startet
+          ihn mit einem Modellpfad (installierter spaCy-Pipeline, z.B. einem Paket oder
+          einem trainierten Pipeline-Ordner) — ein Klick auf „Dienst starten“.
+          Mehrere Modelle können parallel laufen; beendet man den Server,
+          enden auch die Dienste.
+        </p>
         <div className="field-row">
           <input
             className="text-input"
             style={{ minWidth: 280, fontFamily: "var(--font-mono)" }}
             value={modelPath}
             onChange={(event) => setModelPath(event.target.value)}
-            placeholder="en_core_web_sm or /path/to/model"
-            aria-label="spaCy model path"
+            placeholder="en_core_web_sm oder /pfad/zum/pipeline-ordner"
+            aria-label="spaCy-Modellpfad"
           />
           <button className="button button-primary" onClick={() => void spawnWorker()}>
-            Spawn worker
+            Dienst starten
           </button>
         </div>
         <div className="field-row">
