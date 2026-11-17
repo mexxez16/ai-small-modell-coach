@@ -660,7 +660,10 @@ async fn stage_ai_annotate(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let limit = config.get("limit").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) as usize;
+    // 0 means "no limit" (UI sends 0 for "alle") — usize::MAX would overflow
+    // the u64 counter; map it explicitly.
+    let limit_raw = config.get("limit").and_then(|v| v.as_u64()).unwrap_or(0);
+    let limit: usize = if limit_raw == 0 { usize::MAX } else { limit_raw.min(usize::MAX as u64) as usize };
     let candidates: Vec<DataItem> = items
         .into_iter()
         .filter(|i| {

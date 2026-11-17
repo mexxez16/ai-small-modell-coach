@@ -437,10 +437,14 @@ function stagesFromConfig(c: RunConfig): DataRunStage[] {
     });
   }
   // Export runs always last; heads follow the chosen example types.
-  const heads = EXAMPLE_TYPES.filter((t) => c.exampleTypes.includes(t.key)).map((t) => ({
-    name: t.key === "pair" ? "relation" : t.key === "negative" || t.key === "contrastive" ? "relevance" : "type",
-    kinds: t.key === "pair" ? ["pair"] : [t.key],
-  }));
+  // Heads merge by name: negative + contrastive share the "relevance" head,
+  // so the same head is never emitted twice.
+  const headByName = new Map<string, string[]>();
+  for (const t of EXAMPLE_TYPES.filter((t) => c.exampleTypes.includes(t.key))) {
+    const name = t.key === "pair" ? "relation" : t.key === "negative" || t.key === "contrastive" ? "relevance" : "type";
+    headByName.set(name, [...(headByName.get(name) ?? []), t.key]);
+  }
+  const heads = [...headByName.entries()].map(([name, kinds]) => ({ name, kinds }));
   stages.push({ kind: "export", config: { heads } });
   return stages;
 }
