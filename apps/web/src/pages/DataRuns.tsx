@@ -64,8 +64,13 @@ function ReviewCurationBlock({
           {deckOpen && !grouped ? "Review schließen" : "Review starten"}
         </button>
       </div>
-
-      {[...new Set(raw.map((i) => i.label))].slice(0, 8).map((label) => (
+      {raw.length > 0 && (
+      <div style={{
+        marginTop: 10, padding: 12, border: "2px solid var(--color-accent)",
+        borderRadius: "var(--radius-md)", background: "var(--color-accent-subtle, rgba(59,91,219,0.06))",
+      }}>
+        <b>Review-Deck {grouped ? `— ${grouped}` : ""}</b>
+        {[...new Set(raw.map((i) => i.label))].slice(0, 8).map((label) => (
         <div key={label} className="field-row" style={{ gap: 8, marginTop: 4 }}>
           <span className="stat-label">
             {label}: {raw.filter((i) => i.label === label).length} offen
@@ -91,15 +96,16 @@ function ReviewCurationBlock({
             Bunch approven
           </button>
         </div>
-      ))}
-
-      {deckOpen && (
+        ))}
+        {deckOpen && (
         <ReviewDeck
           items={(grouped ? raw.filter((i) => i.label === grouped) : raw) as never}
           onClose={() => setDeckOpen(false)}
           onDecide={onDecide}
           onEditLabel={onEditLabel}
         />
+        )}
+      </div>
       )}
     </div>
   );
@@ -296,6 +302,7 @@ type RunConfig = {
   instruction: string;
   aiLabels: string;
   aiLimit: number;
+  modelOverride: string;
   reviewRequired: boolean;
   reviewPerType: boolean;
 };
@@ -312,6 +319,7 @@ const DEFAULT_CONFIG: RunConfig = {
   instruction: "",
   aiLabels: "",
   aiLimit: 0,
+  modelOverride: "",
   reviewRequired: true,
   reviewPerType: false,
 };
@@ -345,6 +353,7 @@ function stagesFromConfig(c: RunConfig): DataRunStage[] {
           .filter(Boolean),
         kinds: c.exampleTypes,
         limit: c.aiLimit,
+        model: c.modelOverride || undefined,
         review: { required: c.reviewRequired, per_type: c.reviewPerType },
       },
     });
@@ -483,6 +492,8 @@ export default function DataRuns() {
         if (fileDefaults.instruction) merged.instruction = String(fileDefaults.instruction);
         if (fileDefaults.labels) merged.aiLabels = Array.isArray(fileDefaults.labels) ? (fileDefaults.labels as string[]).join(", ") : String(fileDefaults.labels);
         if (fileDefaults.limit !== undefined) merged.aiLimit = Number(fileDefaults.limit);
+        if (fileDefaults.model) merged.modelOverride = String(fileDefaults.model);
+        if (fileDefaults.modelOverride) merged.modelOverride = String(fileDefaults.modelOverride);
         if (fileDefaults.review_required !== undefined) merged.reviewRequired = Boolean(fileDefaults.review_required);
         if (fileDefaults.review_per_type !== undefined) merged.reviewPerType = Boolean(fileDefaults.review_per_type);
         if (!detail || !Array.isArray(detail.stages)) {
@@ -525,6 +536,7 @@ export default function DataRuns() {
       instruction: "processing",
       aiLabels: "processing",
       aiLimit: "processing",
+      modelOverride: "processing",
       reviewRequired: "curation",
       reviewPerType: "curation",
     };
@@ -542,6 +554,7 @@ export default function DataRuns() {
     if (key === "instruction") snake.instruction = value;
     if (key === "aiLabels") snake.labels = value;
     if (key === "aiLimit") snake.limit = value;
+    if (key === "modelOverride") snake.model = value;
     if (key === "reviewRequired") snake.review_required = value;
     if (key === "reviewPerType") snake.review_per_type = value;
     if (key === "useChunk" || key === "chunkStrategy") {
@@ -707,6 +720,7 @@ export default function DataRuns() {
           instruction: cfg.instruction,
           labels: cfg.aiLabels.split(",").map((s) => s.trim()).filter(Boolean),
           limit: cfg.aiLimit,
+          model: cfg.modelOverride,
         };
       case "curation":
         return { review_required: cfg.reviewRequired, review_per_type: cfg.reviewPerType };
@@ -750,6 +764,7 @@ export default function DataRuns() {
         : String(values.labels);
     }
     if (values.limit !== undefined) next.aiLimit = Number(values.limit);
+    if (values.model !== undefined) next.modelOverride = String(values.model ?? "");
     if (values.review_required !== undefined) next.reviewRequired = Boolean(values.review_required);
     if (values.review_per_type !== undefined) next.reviewPerType = Boolean(values.review_per_type);
     setCfg(next);

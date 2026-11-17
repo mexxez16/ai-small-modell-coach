@@ -1366,6 +1366,9 @@ pub struct AnnotateRequest {
     /// Allowed labels; when empty, labels are inferred from the dataset.
     #[serde(default)]
     pub labels: Vec<String>,
+    /// Optional model override for this call (falls back to provider.model).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
@@ -1422,7 +1425,16 @@ pub async fn annotate_items_core(
         .base_url
         .clone()
         .unwrap_or_else(|| "https://api.mistral.ai/v1".into());
-    let model = provider.model.clone().unwrap_or_else(|| "mistral-small-latest".into());
+    let model = body
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| {
+            provider
+                .model
+                .clone()
+                .unwrap_or_else(|| "mistral-small-latest".into())
+        });
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
 
     let mut annotated = 0usize;

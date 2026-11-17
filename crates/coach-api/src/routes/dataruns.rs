@@ -686,6 +686,7 @@ async fn stage_ai_annotate(
         "item_ids": candidates.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
         "instruction": format!("{kinds_hint}{base_instruction}"),
         "labels": config.get("labels").and_then(|v| v.as_array()).map(|a| a.clone()).unwrap_or_default(),
+        "model": config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string()),
     });
     let state = state.clone();
     let response = crate::routes::api::annotate_items_blocking(state, payload).await?;
