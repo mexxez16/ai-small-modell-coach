@@ -31,7 +31,7 @@ function ReviewCurationBlock({
 }) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
-  const [deckView, setDeckView] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"deck" | "both" | "table">("both");
 
   if (!hasDataset) {
     return (
@@ -53,13 +53,18 @@ function ReviewCurationBlock({
         <span className="stat-label">
           Zur Sichtung: {raw.length} von {runItems.length} Items (raw)
         </span>
-        <button
-          className="button button-primary"
-          disabled={raw.length === 0}
-          onClick={() => setDeckView((v) => !v)}
-        >
-          {deckView ? "Tabellen-Review" : "Karten-Review starten"}
-        </button>
+        <div className="field-row" style={{ gap: 4 }}>
+          {(["deck", "both", "table"] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`button ${reviewMode === mode ? "button-primary" : "button-ghost"}`}
+              disabled={raw.length === 0}
+              onClick={() => setReviewMode(mode)}
+            >
+              {mode === "deck" ? "Karten-Review" : mode === "both" ? "Karte + Tabelle" : "Tabellen-Review"}
+            </button>
+          ))}
+        </div>
         <select
           className="select"
           value={pageSize}
@@ -89,15 +94,16 @@ function ReviewCurationBlock({
         </button>
       </div>
 
-      {deckView && (
+      {(reviewMode === "deck" || reviewMode === "both") && (
         <ReviewDeck
           items={raw as never}
-          onClose={() => setDeckView(false)}
+          onClose={() => setReviewMode("table")}
           onDecide={onDecide}
           onEditLabel={onEditLabel}
         />
       )}
 
+      {(reviewMode === "both" || reviewMode === "table") && (
       <table className="table" style={{ marginTop: 8 }}>
         <thead>
           <tr>
@@ -134,6 +140,7 @@ function ReviewCurationBlock({
           )}
         </tbody>
       </table>
+      )}
 
       <div style={{ marginTop: 12 }}>
         <b>Sammel-Aktionen pro Label</b>
@@ -144,12 +151,20 @@ function ReviewCurationBlock({
                 {label}: {raw.filter((i) => i.label === label).length} offen
               </span>
               <button
-                className="button"
+                className="button button-primary"
                 onClick={() =>
                   void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")))
                 }
               >
-                Bunch approven
+                Genehmigen
+              </button>
+              <button
+                className="button"
+                onClick={() =>
+                  void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "rejected")))
+                }
+              >
+                Verwerfen
               </button>
             </div>
           </div>
