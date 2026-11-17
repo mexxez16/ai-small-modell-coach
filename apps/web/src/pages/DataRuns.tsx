@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type DataRun, type DataRunStage, type DataSession, type SourceDoc } from "../api/client";
 import HelpBubble from "../components/HelpBubble";
+import ReviewDeck from "../components/ReviewDeck";
 
 /**
  * Training-data runs: each run is a freely configurable curation pipeline.
@@ -10,25 +11,129 @@ import HelpBubble from "../components/HelpBubble";
  * the run's stage list (ssot_import, chunk, ai_annotate, export).
  */
 
+/*** Curation block of a data-run: becomes visible once the pipeline produced
+ * items; supports the ReviewDeck (per-item) and, grouped by example type,
+ * bulk decisions. ***/
+function ReviewCurationBlock({
+  runItems,
+  hasDataset,
+  onDecide,
+  onEditLabel,
+}: {
+  runItems: Array<{
+    id: string; text?: string | null; subject?: string | null;
+    predicate?: string | null; object?: string | null;
+    label: string; status: string; source: string;
+  }>;
+  hasDataset: boolean;
+  onDecide: (itemId: string, action: "approved" | "rejected") => Promise<void>;
+  onEditLabel: (itemId: string, label: string) => Promise<void>;
+}) {
+  const [deckOpen, setDeckOpen] = useState(false);
+  const [grouped, setGrouped] = useState<string | null>(null);
+
+  if (!hasDataset) {
+    return (
+      <div className="empty-state">
+        Curation erscheint hier, sobald die Pipeline ausgeführt wurde.
+      </div>
+    );
+  }
+
+  const raw = runItems.filter((i) => i.status === "raw");
+  const byKind = (kind: string) => runItems.filter((i) => i.source.includes(kind) || i.label === kind || false);
+  void byKind;
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <span className="stat-label">
+          Zur Sichtung: {raw.length} von {runItems.length} Items (raw) ·
+          {" "}approved: {runItems.filter((i) => i.status === "approved").length} ·
+          {" "}curated: {runItems.filter((i) => i.status === "curated").length} ·
+          {" "}rejected: {runItems.filter((i) => i.status === "rejected").length}
+        </span>
+        <button
+          className="button button-primary"
+          disabled={raw.length === 0}
+          onClick={() => {
+            setGrouped(null);
+            setDeckOpen((v) => !v);
+          }}
+        >
+          {deckOpen && !grouped ? "Review schließen" : "Review starten"}
+        </button>
+      </div>
+
+      {[...new Set(raw.map((i) => i.label))].slice(0, 8).map((label) => (
+        <div key={label} className="field-row" style={{ gap: 8, marginTop: 4 }}>
+          <span className="stat-label">
+            {label}: {raw.filter((i) => i.label === label).length} offen
+          </span>
+          <button
+            className="button"
+            onClick={() => {
+              setGrouped(label);
+              setDeckOpen(true);
+            }}
+          >
+            Bunch reviewen
+          </button>
+          <button
+            className="button button-ghost"
+            onClick={() =>
+              void Promise.all(
+                raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")),
+              )
+            }
+            title="Alle offenen Items dieses Labels approven"
+          >
+            Bunch approven
+          </button>
+        </div>
+      ))}
+
+      {deckOpen && (
+        <ReviewDeck
+          items={(grouped ? raw.filter((i) => i.label === grouped) : raw) as never}
+          onClose={() => setDeckOpen(false)}
+          onDecide={onDecide}
+          onEditLabel={onEditLabel}
+        />
+      )}
+    </div>
+  );
+}
+
 const STATUS_OPTIONS = ["draft", "running", "completed", "failed"];
 
-/*** Config management for one pipeline step: saved configs are selectable
- * (dropdown), picking one applies it to the section inputs, and "Save" writes
- * the current section values as a named config variant on the server. ***/
+/*** Config management for one pipeline step: the step's config file is
+ * shown and hand-editable ("Config anzeigen"); picking applies its values to
+ * the section inputs; saving writes the current UI state into the file. ***/
 function StepConfigControls({
   step,
-  payload,
   onApply,
 }: {
   step: string;
-  /** current section values (snake_case) — the source when saving */
-  payload: Record<string, unknown>;
+  /** current section values (snake_case) — available for future syncs */
+  payload?: Record<string, unknown>;
   onApply: (values: Record<string, unknown>) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [show, setShow] = useState(false);
   const [configs, setConfigs] = useState<string[]>([]);
+  const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
-  const [newName, setNewName] = useState("");
+  const [variantName, setVariantName] = useState("");
+
+  // Load the step's active config file content (created at server start).
+  useEffect(() => {
+    fetch(`/api/config/${encodeURIComponent(step)}`)
+      .then((r) => r.json() as Promise<Record<string, unknown>>)
+      .then((data) => setText(JSON.stringify(data, null, 2)))
+      .catch(() => setText("{}"));
+    void reloadList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const reloadList = async () => {
     try {
@@ -40,13 +145,34 @@ function StepConfigControls({
     }
   };
 
-  useEffect(() => {
-    void reloadList();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const parseText = (): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(text || "{}") as Record<string, unknown>;
+      return parsed;
+    } catch (err) {
+      setMsg(`Ungültiges JSON: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  };
+
+  const saveActive = async () => {
+    const parsed = parseText();
+    if (parsed === null) return;
+    const res = await fetch(`/api/config/${encodeURIComponent(step)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parsed),
+    });
+    if (res.ok) {
+      onApply(parsed);
+      setMsg("Config gespeichert — Abschnitt aktualisiert.");
+    } else {
+      setMsg(`Speichern fehlgeschlagen (${res.status}).`);
+    }
+  };
 
   return (
-    <div style={{ marginBottom: 8, borderTop: "1px solid var(--color-border)", paddingTop: 6 }}>
+    <div style={{ marginBottom: 8, borderBottom: "1px solid var(--color-border)", paddingBottom: 8 }}>
       <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <select
           className="select"
@@ -54,94 +180,91 @@ function StepConfigControls({
           onChange={async (e) => {
             const name = e.target.value;
             if (!name) return;
-            try {
-              const res = await fetch(
-                `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(name)}`,
-              );
-              const data = (await res.json()) as Record<string, unknown>;
-              onApply(structuredClone(data));
-              setMsg(`Config "${name}" geladen.`);
-            } catch (err) {
-              setMsg(err instanceof Error ? err.message : String(err));
-            }
+            const res = await fetch(
+              `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(name)}`,
+            );
+            const data = (await res.json()) as Record<string, unknown>;
+            // Show the chosen file for hand-editing; applying happens via Speichern.
+            setText(JSON.stringify(data, null, 2));
+            setShow(true);
+            setMsg(`Config "${name}" geladen — Speichern wendet sie an.`);
           }}
-          aria-label="Gespeicherte Config wählen"
+          aria-label="Config-Variante wählen"
         >
-          <option value="">— Gespeicherte Config laden —</option>
+          <option value="">— Config-Variante laden —</option>
           {configs.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
         </select>
-        <input
-          className="input"
-          placeholder="Config-Name…"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          style={{ width: 180 }}
-          title="Name für die neue Config-Variante"
-        />
         <button
           className="button"
-          disabled={!newName.trim()}
-          onClick={() =>
-            void (async () => {
-              try {
-                await fetch(
-                  `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(newName.trim())}`,
-                  {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                  },
-                );
-                setMsg(`Config "${newName.trim()}" gespeichert.`);
-                setNewName("");
-                await reloadList();
-              } catch (err) {
-                setMsg(err instanceof Error ? err.message : String(err));
-              }
-            })()
-          }
+          onClick={() => setShow((v) => !v)}
+          title="Config-Datei dieses Schritts anzeigen und von Hand bearbeiten"
         >
-          Als Config speichern
-        </button>
-        <button
-          className="button button-ghost"
-          onClick={() => setOpen((v) => !v)}
-          title="Konfigurationsdatei(en) ansehen"
-        >
-          {open ? "▲ Dateien" : "▼ Dateien"}
+          {show ? "▲ Config verbergen" : "Config anzeigen"}
         </button>
       </div>
-      {open && (
+      {show && (
         <div style={{ marginTop: 6 }}>
-          <pre
-            style={{
-              margin: 0,
-              padding: 10,
-              background: "var(--color-surface-raised)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-sm)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              overflow: "auto",
-              maxHeight: 200,
-            }}
-          >
-{configs.length === 0
-  ? `<data_dir>/config/${step}/ — noch keine gespeicherten Configs.\nAktive Werte werden unter config/${step}.json gehalten.`
-  : configs
-      .map(
-        (c) => `${c}.json`,
-      )
-      .join("\n")}
-          </pre>
-          <span className="stat-label">
-            Dateien liegen unter <code>&lt;data_dir&gt;/config/{step}/</code>; die
-            aktiven Werte in <code>config/{step}.json</code>.
-          </span>
+          <textarea
+            className="input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={Math.min(14, Math.max(5, text.split("\n").length))}
+            style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 12.5 }}
+            spellCheck={false}
+          />
+          <div className="field-row" style={{ flexWrap: "wrap", gap: 8, marginTop: 6, alignItems: "center" }}>
+            <button className="button button-primary" onClick={() => void saveActive()}>
+              Speichern + anwenden
+            </button>
+            <input
+              className="input"
+              placeholder="Als Variante speichern unter…"
+              value={variantName}
+              onChange={(e) => setVariantName(e.target.value)}
+              style={{ width: 200 }}
+            />
+            <button
+              className="button"
+              disabled={!variantName.trim()}
+              onClick={() =>
+                void (async () => {
+                  const parsed = parseText();
+                  if (parsed === null) return;
+                  const res = await fetch(
+                    `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(variantName.trim())}`,
+                    {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(parsed),
+                    },
+                  );
+                  if (res.ok) {
+                    setMsg(`Variante "${variantName.trim()}" gespeichert.`);
+                    setVariantName("");
+                    await reloadList();
+                  }
+                })()
+              }
+            >
+              Variante speichern
+            </button>
+            <button
+              className="button button-ghost"
+              onClick={() => {
+                const parsed = parseText();
+                if (parsed !== null) {
+                  onApply(parsed);
+                  setMsg("Werte in den Abschnitt übernommen.");
+                }
+              }}
+            >
+              Ohne Speichern anwenden
+            </button>
+          </div>
         </div>
       )}
       {msg && (
@@ -286,6 +409,20 @@ export default function DataRuns() {
     setCfg((prev) => ({ ...prev, [key]: value }));
 
   const detail = useMemo(() => runs.find((r) => r.id === runId) ?? null, [runs, runId]);
+
+  // Items of the run's dataset (curation view + status counts).
+  const [runItems, setRunItems] = useState<Array<{
+    id: string; text?: string | null; subject?: string | null;
+    predicate?: string | null; object?: string | null;
+    label: string; status: string; source: string;
+  }>>([]);
+  useEffect(() => {
+    if (!detail?.dataset_id) return;
+    fetch(`/api/datasets/${detail.dataset_id}/items`)
+      .then((r) => r.json())
+      .then((rows: Array<{ id: string; text?: string; subject?: string; predicate?: string; object?: string; label: string; status: string; source: string }>) => setRunItems(rows))
+      .catch(() => {});
+  }, [detail?.dataset_id, detail?.updated_at, detail?.status]);
 
   const refresh = useCallback(async () => {
     try {
@@ -578,8 +715,19 @@ export default function DataRuns() {
     }
   };
 
-  /** Apply a loaded config file to the section inputs (two-way sync). */
-  const applyStepValues = (values: Record<string, unknown>) => {
+  /** Decision from the curation deck: write the new status back. */
+  const setItemStatus = async (itemId: string, status: string) => {
+    const item = runItems.find((i) => i.id === itemId);
+    if (!item || !detail?.dataset_id) return;
+    setRunItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, status } : i)));
+    await fetch(`/api/datasets/${detail.dataset_id}/items`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...item, status }),
+    }).catch(() => {});
+  };
+
+  /** Apply a loaded config file to the section inputs (two-way sync). */  const applyStepValues = (values: Record<string, unknown>) => {
     const next = { ...cfg };
     if (values.source_id !== undefined) next.sourceId = String(values.source_id);
     if (values.strategy !== undefined) next.chunkStrategy = String(values.strategy);
@@ -974,11 +1122,21 @@ export default function DataRuns() {
                   Sichtung einzelnd nach Typ (nicht als Sammelstapel)
                 </label>
               </div>
-              <p className="stat-label" style={{ marginTop: 6 }}>
-                KI-Antworten landen immer als Entwurf (raw) — nichts wird automatisch
-                approved. Die Sichtung passiert in der Workbench: einzelne Items oder
-                als Bunch pro Beispiel-Typ.
-              </p>
+    <ReviewCurationBlock
+      runItems={runItems}
+      hasDataset={Boolean(detail?.dataset_id)}
+      onDecide={(id, action) => setItemStatus(id, action)}
+      onEditLabel={async (id, label) => {
+        const item = runItems.find((i) => i.id === id);
+        if (!item || !detail?.dataset_id) return;
+        setRunItems((prev) => prev.map((i) => (i.id === id ? { ...i, label } : i)));
+        await fetch(`/api/datasets/${detail.dataset_id}/items`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...item, label }),
+        }).catch(() => {});
+      }}
+    />
             </>
             </>
           ))}

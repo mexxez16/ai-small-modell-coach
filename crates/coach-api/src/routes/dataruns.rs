@@ -670,10 +670,21 @@ async fn stage_ai_annotate(
     }
 
     // Call the shared annotate handler synchronously over the dataset.
+    // The chosen example types (output-settings step) flow into the prompt:
+    // the model is told which kinds of examples it is producing/labeling.
+    let kinds_hint = if kinds.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Beispiel-Typen im Fokus: {}.\n",
+            kinds.join(", ")
+        )
+    };
+    let base_instruction = config.get("instruction").and_then(|v| v.as_str()).unwrap_or("");
     let payload = json!({
         "provider_id": config.get("provider_id").and_then(|v| v.as_str()).unwrap_or(""),
         "item_ids": candidates.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
-        "instruction": config.get("instruction").and_then(|v| v.as_str()).unwrap_or(""),
+        "instruction": format!("{kinds_hint}{base_instruction}"),
         "labels": config.get("labels").and_then(|v| v.as_array()).map(|a| a.clone()).unwrap_or_default(),
     });
     let state = state.clone();

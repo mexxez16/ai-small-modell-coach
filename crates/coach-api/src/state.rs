@@ -137,6 +137,22 @@ impl AppState {
         // Create the data dir so the database + providers land there even on
         // a completely fresh COACH_DATA_DIR.
         let _ = std::fs::create_dir_all(&data_dir);
+        // Per-step config files: created empty so the UI can edit them from
+        // day one (the run editor reads and writes these by step name).
+        let cfg_dir = data_dir.join("config");
+        let _ = std::fs::create_dir_all(&cfg_dir);
+        for step in [
+            "input",
+            "preprocessing",
+            "output_settings",
+            "processing",
+            "curation",
+        ] {
+            let path = cfg_dir.join(format!("{step}.json"));
+            if !path.exists() {
+                let _ = std::fs::write(&path, "{}");
+            }
+        }
         let store = open_storage(&data_dir);
         let provider_store = Arc::new(crate::providers::ProviderStore::load(&data_dir));
         AppState {
