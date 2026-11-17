@@ -155,7 +155,14 @@ export default function ReviewDeck({ items, onClose, onDecide, onEditLabel }: Pr
         <span className="stat-label">{item.source}</span>
       </div>
 
-      <div className="field-row" style={{ gap: 8, marginTop: "var(--space-4)" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 8,
+          marginTop: "var(--space-4)",
+        }}
+      >
         <button className="button button-primary" onClick={() => void decide("approved")}>
           Genehmigen <span className="stat-label">(y)</span>
         </button>

@@ -118,10 +118,11 @@ const STATUS_OPTIONS = ["draft", "running", "completed", "failed"];
  * the section inputs; saving writes the current UI state into the file. ***/
 function StepConfigControls({
   step,
+  payload,
   onApply,
 }: {
   step: string;
-  /** current section values (snake_case) — available for future syncs */
+  /** current section values (snake_case) — keeps the shown JSON live */
   payload?: Record<string, unknown>;
   onApply: (values: Record<string, unknown>) => void;
 }) {
@@ -130,16 +131,25 @@ function StepConfigControls({
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   const [variantName, setVariantName] = useState("");
+  /** true while the user is hand-editing — live overwrite paused then */
+  const [dirty, setDirty] = useState(false);
 
-  // Load the step's active config file content (created at server start).
+  // Live sync: whenever the section values change (any checkbox/input) and
+  // the config view is open and not hand-edited, re-read the file write the
+  // view mirrors the actual config state.
   useEffect(() => {
-    fetch(`/api/config/${encodeURIComponent(step)}`)
-      .then((r) => r.json() as Promise<Record<string, unknown>>)
-      .then((data) => setText(JSON.stringify(data, null, 2)))
-      .catch(() => setText("{}"));
-    void reloadList();
+    if (!show || dirty) return;
+    // small delay: the section's PUT debounces at 400 ms — refetch after it
+    const timer = window.setTimeout(() => {
+      fetch(`/api/config/${encodeURIComponent(step)}`)
+        .then((r) => r.json() as Promise<Record<string, unknown>>)
+        .then((data) => setText(JSON.stringify(data, null, 2)))
+        .catch(() => {});
+    }, 650);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [step, show, dirty, JSON.stringify(payload ?? {})]);
+
 
   const reloadList = async () => {
     try {
@@ -171,6 +181,7 @@ function StepConfigControls({
     });
     if (res.ok) {
       onApply(parsed);
+      setDirty(false);
       setMsg("Config gespeichert — Abschnitt aktualisiert.");
     } else {
       setMsg(`Speichern fehlgeschlagen (${res.status}).`);
@@ -192,6 +203,7 @@ function StepConfigControls({
             const data = (await res.json()) as Record<string, unknown>;
             // Show the chosen file for hand-editing; applying happens via Speichern.
             setText(JSON.stringify(data, null, 2));
+            setDirty(false);
             setShow(true);
             setMsg(`Config "${name}" geladen — Speichern wendet sie an.`);
           }}
@@ -217,7 +229,10 @@ function StepConfigControls({
           <textarea
             className="input"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setDirty(true);
+              setText(e.target.value);
+            }}
             rows={Math.min(14, Math.max(5, text.split("\n").length))}
             style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 12.5 }}
             spellCheck={false}
