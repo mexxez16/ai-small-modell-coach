@@ -558,7 +558,10 @@ fn build_system_prompt(state: &AppState) -> String {
          {\"tool\": \"docs_search\", \"query\": \"<Text>\"} — durchsucht den lokalen \
          spaCy-Doku-Spiegel; \
          {\"tool\": \"get_data_profile\"} — Datenprofil aller Datasets \
-         (Items, Label-Verteilung, ohne-Text, Duplikate)."
+         (Items, Label-Verteilung, ohne-Text, Duplikate). \
+         Regel: Bei Fragen, die sich auf die Beschaffenheit der Trainingsdaten \
+         beziehen (Mengen, Labels, Qualität, Duplikate), rufe zuerst \
+         {\"tool\": \"get_data_profile\"} auf und antworte erst danach."
             .to_string(),
     );
 
