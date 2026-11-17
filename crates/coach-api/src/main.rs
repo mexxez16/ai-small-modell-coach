@@ -106,6 +106,10 @@ use utoipa::OpenApi;
         routes::api::fs_list,
         routes::api::get_step_config,
         routes::api::put_step_config,
+        routes::api::list_configs_for_step,
+        routes::api::get_named_step_config,
+        routes::api::put_named_step_config,
+        routes::api::delete_named_step_config,
 
         routes::workers::spawn_worker,
 
@@ -313,6 +317,13 @@ fn build_router(state: AppState) -> Router {
         .route("/api/data-runs/{id}/execute", post(routes::dataruns::execute_data_run))
         .route("/api/fs/list", get(routes::api::fs_list))
         .route("/api/config/{step}", get(routes::api::get_step_config).put(routes::api::put_step_config))
+        .route("/api/config/{step}/list", get(routes::api::list_configs_for_step))
+        .route(
+            "/api/config/{step}/{name}",
+            get(routes::api::get_named_step_config)
+                .put(routes::api::put_named_step_config)
+                .delete(routes::api::delete_named_step_config),
+        )
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
 

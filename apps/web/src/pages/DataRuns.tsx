@@ -11,6 +11,147 @@ import HelpBubble from "../components/HelpBubble";
  */
 
 const STATUS_OPTIONS = ["draft", "running", "completed", "failed"];
+
+/*** Config management for one pipeline step: saved configs are selectable
+ * (dropdown), picking one applies it to the section inputs, and "Save" writes
+ * the current section values as a named config variant on the server. ***/
+function StepConfigControls({
+  step,
+  payload,
+  onApply,
+}: {
+  step: string;
+  /** current section values (snake_case) — the source when saving */
+  payload: Record<string, unknown>;
+  onApply: (values: Record<string, unknown>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [configs, setConfigs] = useState<string[]>([]);
+  const [msg, setMsg] = useState("");
+  const [newName, setNewName] = useState("");
+
+  const reloadList = async () => {
+    try {
+      const res = await fetch(`/api/config/${encodeURIComponent(step)}/list`);
+      const data = (await res.json()) as { configs?: string[] };
+      setConfigs(data.configs ?? []);
+    } catch {
+      setConfigs([]);
+    }
+  };
+
+  useEffect(() => {
+    void reloadList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div style={{ marginBottom: 8, borderTop: "1px solid var(--color-border)", paddingTop: 6 }}>
+      <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <select
+          className="select"
+          defaultValue=""
+          onChange={async (e) => {
+            const name = e.target.value;
+            if (!name) return;
+            try {
+              const res = await fetch(
+                `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(name)}`,
+              );
+              const data = (await res.json()) as Record<string, unknown>;
+              onApply(structuredClone(data));
+              setMsg(`Config "${name}" geladen.`);
+            } catch (err) {
+              setMsg(err instanceof Error ? err.message : String(err));
+            }
+          }}
+          aria-label="Gespeicherte Config wählen"
+        >
+          <option value="">— Gespeicherte Config laden —</option>
+          {configs.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <input
+          className="input"
+          placeholder="Config-Name…"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          style={{ width: 180 }}
+          title="Name für die neue Config-Variante"
+        />
+        <button
+          className="button"
+          disabled={!newName.trim()}
+          onClick={() =>
+            void (async () => {
+              try {
+                await fetch(
+                  `/api/config/${encodeURIComponent(step)}/${encodeURIComponent(newName.trim())}`,
+                  {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                  },
+                );
+                setMsg(`Config "${newName.trim()}" gespeichert.`);
+                setNewName("");
+                await reloadList();
+              } catch (err) {
+                setMsg(err instanceof Error ? err.message : String(err));
+              }
+            })()
+          }
+        >
+          Als Config speichern
+        </button>
+        <button
+          className="button button-ghost"
+          onClick={() => setOpen((v) => !v)}
+          title="Konfigurationsdatei(en) ansehen"
+        >
+          {open ? "▲ Dateien" : "▼ Dateien"}
+        </button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          <pre
+            style={{
+              margin: 0,
+              padding: 10,
+              background: "var(--color-surface-raised)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              overflow: "auto",
+              maxHeight: 200,
+            }}
+          >
+{configs.length === 0
+  ? `<data_dir>/config/${step}/ — noch keine gespeicherten Configs.\nAktive Werte werden unter config/${step}.json gehalten.`
+  : configs
+      .map(
+        (c) => `${c}.json`,
+      )
+      .join("\n")}
+          </pre>
+          <span className="stat-label">
+            Dateien liegen unter <code>&lt;data_dir&gt;/config/{step}/</code>; die
+            aktiven Werte in <code>config/{step}.json</code>.
+          </span>
+        </div>
+      )}
+      {msg && (
+        <div className="stat-label" style={{ marginTop: 4 }}>
+          {msg}
+        </div>
+      )}
+    </div>
+  );
+}
 const EXAMPLE_TYPES = [
   { key: "example", label: "Normale Beispiele (examples)" },
   { key: "negative", label: "Negative Beispiele (nicht-Entität)" },
@@ -409,6 +550,63 @@ export default function DataRuns() {
     </div>
   );
 
+  /** Current section values in the config-file (snake_case) shape. */
+  const stepPayload = (step: string): Record<string, unknown> => {
+    switch (step) {
+      case "input":
+        return { source_id: cfg.sourceId };
+      case "preprocessing":
+        return {
+          strategy: cfg.chunkStrategy,
+          max_chars: cfg.chunkMaxChars,
+          overlap: cfg.chunkOverlap,
+          label: cfg.chunkLabel,
+        };
+      case "output_settings":
+        return { example_types: cfg.exampleTypes };
+      case "processing":
+        return {
+          provider_id: cfg.providerId,
+          instruction: cfg.instruction,
+          labels: cfg.aiLabels.split(",").map((s) => s.trim()).filter(Boolean),
+          limit: cfg.aiLimit,
+        };
+      case "curation":
+        return { review_required: cfg.reviewRequired, review_per_type: cfg.reviewPerType };
+      default:
+        return {};
+    }
+  };
+
+  /** Apply a loaded config file to the section inputs (two-way sync). */
+  const applyStepValues = (values: Record<string, unknown>) => {
+    const next = { ...cfg };
+    if (values.source_id !== undefined) next.sourceId = String(values.source_id);
+    if (values.strategy !== undefined) next.chunkStrategy = String(values.strategy);
+    if (values.max_chars !== undefined) next.chunkMaxChars = Number(values.max_chars);
+    if (values.overlap !== undefined) next.chunkOverlap = Number(values.overlap);
+    if (values.label !== undefined) next.chunkLabel = String(values.label);
+    if (values.example_types !== undefined) {
+      next.exampleTypes = Array.isArray(values.example_types)
+        ? (values.example_types as string[])
+        : String(values.example_types)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+    }
+    if (values.provider_id !== undefined) next.providerId = String(values.provider_id);
+    if (values.instruction !== undefined) next.instruction = String(values.instruction);
+    if (values.labels !== undefined) {
+      next.aiLabels = Array.isArray(values.labels)
+        ? (values.labels as string[]).join(", ")
+        : String(values.labels);
+    }
+    if (values.limit !== undefined) next.aiLimit = Number(values.limit);
+    if (values.review_required !== undefined) next.reviewRequired = Boolean(values.review_required);
+    if (values.review_per_type !== undefined) next.reviewPerType = Boolean(values.review_per_type);
+    setCfg(next);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -552,8 +750,10 @@ export default function DataRuns() {
 
           {sectionCard("1", "Data Input Selection", "pipeline.input", (
             <>
+            <StepConfigControls step="input" payload={stepPayload("input")} onApply={applyStepValues} />
+            <>
               <p className="stat-label">
-                Quelle der Pipeline: strukturierte SSOT-Kopie (entities/relations) oder Textdokument.
+                Quelle der Pipeline: strukturierte JSON-Datei oder Textdokument.
                 Neue Quellen hochgeladen werden im Workbench-Bereich unter /training-data.
               </p>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -593,9 +793,12 @@ export default function DataRuns() {
                 </p>
               )}
             </>
+            </>
           ))}
 
           {sectionCard("2", "Pre-Processing (Chunking)", "pipeline.preprocessing", (
+            <>
+            <StepConfigControls step="preprocessing" payload={stepPayload("preprocessing")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
                 <label>
@@ -653,9 +856,12 @@ export default function DataRuns() {
                 reproduzierbar und ohne LLM-Kosten. LLM-gestützte Zerlegung folgt als Option.
               </p>
             </>
+            </>
           ))}
 
           {sectionCard("3", "Data Output Settings (Beispiel-Typen)", "pipeline.output_settings", (
+            <>
+            <StepConfigControls step="output_settings" payload={stepPayload("output_settings")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 12 }}>
                 {EXAMPLE_TYPES.map((t) => (
@@ -682,9 +888,12 @@ export default function DataRuns() {
                 {" <SEP> "}-Trenner).
               </p>
             </>
+            </>
           ))}
 
           {sectionCard("4", "Data Processing (KI / Modell)", "pipeline.processing", (
+            <>
+            <StepConfigControls step="processing" payload={stepPayload("processing")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
                 <select className="select" value={cfg.providerId} onChange={(e) => updateAndPersist("providerId", e.target.value)} aria-label="Modell/Provider" style={{ width: 300 }}>
@@ -739,9 +948,12 @@ export default function DataRuns() {
                 </div>
               </div>
             </>
+            </>
           ))}
 
           {sectionCard("5", "Examples Curation (Human Check)", "pipeline.curation", (
+            <>
+            <StepConfigControls step="curation" payload={stepPayload("curation")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 12 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -767,6 +979,7 @@ export default function DataRuns() {
                 approved. Die Sichtung passiert in der Workbench: einzelne Items oder
                 als Bunch pro Beispiel-Typ.
               </p>
+            </>
             </>
           ))}
 

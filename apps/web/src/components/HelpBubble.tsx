@@ -69,11 +69,11 @@ export const helpTexts: Record<string, HelpEntry> = {
   "data-runs.pipeline": {
     title: "Was ist ein Data-Run?",
     body: "Ein Data-Run ist eine frei konfigurierbare Pipeline in sechs Abschnitten: (1) Datenquelle, (2) Vorverarbeitung wie Chunking, (3) gewünschte Beispiel-Typen, (4) KI-Verarbeitung mit bearbeitbarem Prompt, (5) optionaler menschlicher Check, (6) Ausgabe mit Tabellen und Kennzahlen. Jede Ausführung schreibt Kennzahlen und übersprungene Datensätze ins Run-Ergebnis.",
-    example: "SSOT-Datei → Absatz-Chunking → KI-Annotation → Review → JSONL/Dataset fürs Finetuning",
+    example: "Strukturierte Datei → Absatz-Chunking → KI-Annotation → Review → JSONL/Dataset fürs Finetuning",
   },
   "pipeline.input": {
     title: "Datenquelle wählen",
-    body: "Die Quelle ist ein hochgeladenes Dokument. SSOT-JSON mit 'entities' und 'relations' wird strukturiert zerlegt; andere Texte brauchen das Chunking aus Abschnitt 2. Quellen entstehen im Workbench-Bereich über Datei-Upload oder direktes Einfügen.",
+    body: "Die Quelle ist ein hochgeladenes Dokument. Strukturiertes JSON mit 'entities' und 'relations' wird zerlegt; reiner Text braucht das Chunking aus Abschnitt 2. Quellen entstehen im Workbench-Bereich über Datei-Upload oder direktes Einfügen.",
     example: 'entities: {"Begriff": {examples: [...], negative_examples: [...]}}',
   },
   "pipeline.preprocessing": {

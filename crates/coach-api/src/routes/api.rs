@@ -2098,3 +2098,77 @@ fn write_step_config(step: &str, value: &serde_json::Value) -> Result<(), ApiErr
         .map_err(|e| coach_core::CoreError::Serialization(e))?;
     std::fs::write(&path, text).map_err(|e| coach_core::CoreError::Io(e).into())
 }
+
+/// List saved config files for one pipeline step (`GET /api/config/{step}/list`).
+#[utoipa::path(get, path = "/api/config/{step}/list", responses((status = 200, body = serde_json::Value)))]
+pub async fn list_configs_for_step(
+    AxumPath(step): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let dir = step_config_dir(&step);
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(read) = std::fs::read_dir(&dir) {
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(stem) = name.strip_suffix(".json") {
+                names.push(stem.to_string());
+            }
+        }
+    }
+    names.sort();
+    Ok(Json(json!({ "step": step, "configs": names })))
+}
+
+/// Directory holding named config variants for one step
+/// (`<data_dir>/config/<step>/<name>.json`).
+fn step_config_dir(step: &str) -> std::path::PathBuf {
+    let base = crate::state::resolve_data_dir();
+    base.join("config").join(step)
+}
+
+/// Read a named config file (`GET /api/config/{step}/{name}`).
+#[utoipa::path(get, path = "/api/config/{step}/{name}", responses((status = 200, body = serde_json::Value)))]
+pub async fn get_named_step_config(
+    axum::extract::Path((step, name)): axum::extract::Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    read_step_config_named(&step, &name).map(Json)
+}
+
+/// Write a named config file (`PUT /api/config/{step}/{name}`).
+#[utoipa::path(put, path = "/api/config/{step}/{name}", request_body = serde_json::Value, responses((status = 200, body = serde_json::Value)))]
+pub async fn put_named_step_config(
+    axum::extract::Path((step, name)): axum::extract::Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    write_step_config_named(&step, &name, &body)?;
+    Ok(Json(body))
+}
+
+/// Delete a named config file (`DELETE /api/config/{step}/{name}`).
+#[utoipa::path(delete, path = "/api/config/{step}/{name}", responses((status = 200)))]
+pub async fn delete_named_step_config(
+    axum::extract::Path((step, name)): axum::extract::Path<(String, String)>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    let path = step_config_dir(&step).join(format!("{name}.json"));
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| coach_core::CoreError::Io(e))?;
+    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+fn read_step_config_named(step: &str, name: &str) -> Result<serde_json::Value, ApiError> {
+    let path = step_config_dir(step).join(format!("{name}.json"));
+    if !path.exists() {
+        return Ok(json!({}));
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| coach_core::CoreError::Io(e))?;
+    serde_json::from_str(&text).map_err(|e| coach_core::CoreError::Serialization(e).into())
+}
+
+fn write_step_config_named(step: &str, name: &str, value: &serde_json::Value) -> Result<(), ApiError> {
+    let dir = step_config_path(step);
+    std::fs::create_dir_all(&dir).map_err(|e| coach_core::CoreError::Io(e))?;
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| coach_core::CoreError::Serialization(e))?;
+    std::fs::write(dir.join(format!("{name}.json")), text)
+        .map_err(|e| coach_core::CoreError::Io(e).into())
+}

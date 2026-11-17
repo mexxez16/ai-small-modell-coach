@@ -91,7 +91,7 @@ export default function DataSessionDetail() {
         <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
           <input
             className="input"
-            placeholder="Run-Name, z.B. ssot-kurierung-v1"
+            placeholder="Run-Name, z.B. kurierung-v1"
             value={runName}
             onChange={(e) => setRunName(e.target.value)}
             style={{ width: 280 }}
@@ -100,7 +100,7 @@ export default function DataSessionDetail() {
             className="button button-primary"
             disabled={busy || !runName.trim()}
             onClick={() => void createRun("ssot")}
-            title="Stages: ssot_import + export — im Run-Editor frei konfigurierbar"
+            title="Stages: strukturierter Import + Export — im Run-Editor frei konfigurierbar"
           >
             Mit Import-Pipeline anlegen
           </button>
