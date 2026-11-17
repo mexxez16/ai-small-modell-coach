@@ -117,7 +117,14 @@ export default function Assistant() {
     try {
       setError(null);
       const res = await api.assistantTurn(providerId, next);
-      setMessages([...next, { role: "assistant", content: res.reply || "(leere Antwort)" }]);
+      let reply = res.reply || "(leere Antwort)";
+      if (res.tool_trace.length > 0) {
+        const lines = res.tool_trace
+          .map((entry) => `runde ${entry.round}: ${entry.tool} ${entry.ok ? "ok" : "fehlgeschlagen"}${entry.query ? ` (${entry.query})` : ""}`)
+          .join("\n");
+        reply = `${lines}\n\n${reply}`;
+      }
+      setMessages([...next, { role: "assistant", content: reply }]);
       if (res.proposals.length > 0) await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

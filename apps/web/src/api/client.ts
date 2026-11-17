@@ -388,7 +388,7 @@ export const api = {
   ) =>
     request<{
       reply: string;
-      protocol: "json" | "plain";
+      tool_trace: Array<{ round: number; tool: string; query?: string; ok: boolean }>;
       proposals: AssistantProposal[];
     }>("POST", "/api/assistant/turn", { provider_id: providerId, messages }),
   assistantProposals: () =>

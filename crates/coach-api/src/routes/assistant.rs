@@ -31,6 +31,9 @@ const CONTEXT_STEPS: &[&str] = &[
     "curation",
 ];
 
+/// How many model round-trips one turn may use for the tool loop.
+const MAX_TOOL_ROUNDS: usize = 4;
+
 fn data_dir() -> std::path::PathBuf {
     crate::state::resolve_data_dir()
 }
@@ -184,7 +187,7 @@ pub async fn spacy_status(Query(q): Query<SpacyProbeQuery>) -> Json<Value> {
 /// `GET /api/assistant/data-profile` — aggregate stats across all datasets:
 /// per-dataset item counts by status, by kind and the label distribution,
 /// plus global sanity signals (items without text, duplicate texts).
-pub async fn data_profile(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+fn data_profile_core(state: &AppState) -> Result<Value, ApiError> {
     let datasets = state
         .storage
         .list_datasets()
@@ -232,7 +235,12 @@ pub async fn data_profile(State(state): State<AppState>) -> Result<Json<Value>, 
             "duplicate_texts": dup_texts,
         }));
     }
-    Ok(Json(json!({ "datasets": out })))
+    Ok(json!({ "datasets": out }))
+}
+
+/// `GET /api/assistant/data-profile`
+pub async fn data_profile(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(data_profile_core(&state)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -279,9 +287,11 @@ pub struct TurnRequest {
     pub messages: Vec<Value>,
 }
 
-/// `POST /api/assistant/turn` — one advising turn. The reply is expected in
-/// the JSON tool protocol; recognized write actions become pending
-/// proposals (returned in the response, persisted for the workbench).
+/// `POST /api/assistant/turn` — one advising turn with a bounded tool loop:
+/// the model may call read-only tools (`docs_search`, `get_data_profile`)
+/// inside one turn; their results are fed back so the next model call can
+/// use them. Write actions (`propose_*`) never execute — they become
+/// pending proposals for the workbench.
 pub async fn assistant_turn(
     State(state): State<AppState>,
     Json(body): Json<TurnRequest>,
@@ -303,7 +313,128 @@ pub async fn assistant_turn(
         )));
     }
 
-    // Non-streaming completion (assistant answers are small JSON envelopes).
+    let mut convo: Vec<Value> =
+        vec![json!({"role": "system", "content": build_system_prompt(&state)})];
+    convo.extend(body.messages.iter().cloned());
+
+    let mut all = read_proposals();
+    let mut queued: Vec<Proposal> = Vec::new();
+    let mut tool_trace: Vec<Value> = Vec::new();
+    let mut final_reply = String::new();
+
+    for round in 0..MAX_TOOL_ROUNDS {
+        let raw_text = call_model_once(&state, &provider, &convo).await?;
+        let (text, actions) = parse_protocol(&raw_text);
+
+        // 1) Write actions: become proposals, nothing else.
+        let mut has_writes = false;
+        for action in &actions {
+            match action["tool"].as_str() {
+                Some("propose_step_config") => {
+                    let step = action["step"].as_str().unwrap_or_default().to_string();
+                    if !CONTEXT_STEPS.contains(&step.as_str()) {
+                        continue;
+                    }
+                    let payload = json!({"tool": "propose_step_config", "step": step, "config": action["config"].clone()});
+                    all.push(new_proposal("step_config", Some(step.clone()), &payload));
+                    queued.push(all.last().cloned().expect("just pushed"));
+                    has_writes = true;
+                }
+                Some("propose_goal") => {
+                    let payload = json!({"tool": "propose_goal", "goal": action["goal"].clone()});
+                    all.push(new_proposal("goal", None, &payload));
+                    queued.push(all.last().cloned().expect("just pushed"));
+                    has_writes = true;
+                }
+                _ => {}
+            }
+        }
+
+        // 2) Read actions: execute now, feed results into the next call.
+        let mut results: Vec<Value> = Vec::new();
+        for action in &actions {
+            match action["tool"].as_str() {
+                Some("docs_search") => {
+                    let query = action["query"]
+                        .as_str()
+                        .or_else(|| action["q"].as_str())
+                        .unwrap_or("");
+                    let version = action["version"].as_str();
+                    let executed = docs_search_core(query, version, 10);
+                    let (ok, value) = match executed {
+                        Ok(value) => (true, value),
+                        Err(err) => (false, json!({ "error": err.0.to_string() })),
+                    };
+                    tool_trace.push(json!({
+                        "round": round + 1,
+                        "tool": "docs_search",
+                        "query": query,
+                        "ok": ok,
+                    }));
+                    results.push(json!({"tool": "docs_search", "ok": ok, "result": value}));
+                }
+                Some("get_data_profile") => {
+                    let executed = data_profile_core(&state);
+                    let (ok, value) = match executed {
+                        Ok(value) => (true, value),
+                        Err(err) => (false, json!({ "error": err.0.to_string() })),
+                    };
+                    tool_trace.push(json!({
+                        "round": round + 1,
+                        "tool": "get_data_profile",
+                        "ok": ok,
+                    }));
+                    results.push(json!({"tool": "get_data_profile", "ok": ok, "result": value}));
+                }
+                _ => {}
+            }
+        }
+
+        // No tool usage this round: the model's text is the final answer.
+        if results.is_empty() {
+            final_reply = if has_writes && text.is_empty() {
+                "Ich habe Vorschläge hinterlegt — sieh im Bereich „Vorschläge“ nach."
+                    .to_string()
+            } else {
+                text
+            };
+            break;
+        }
+
+        // Feed the model's intermediate answer and the tool results back.
+        convo.push(json!({"role": "assistant", "content": raw_text}));
+        convo.push(json!({
+            "role": "user",
+            "content": format!(
+                "TOOL RESULTS (vom System ausgeführt):\n{}",
+                serde_json::to_string_pretty(&results)
+                    .unwrap_or_else(|_| "[]".into())
+            ),
+        }));
+    }
+
+    if !queued.is_empty() {
+        write_proposals(&all)?;
+    }
+
+    let reply = if final_reply.is_empty() {
+        "(Keine abschließende Antwort — Werkzeug-Limit erreicht.)".to_string()
+    } else {
+        final_reply
+    };
+    Ok(Json(json!({
+        "reply": reply,
+        "tool_trace": tool_trace,
+        "proposals": queued,
+    })))
+}
+
+/// One non-streaming chat completion against the given provider.
+async fn call_model_once(
+    state: &AppState,
+    provider: &crate::providers::Provider,
+    messages: &[Value],
+) -> Result<String, ApiError> {
     let base = provider
         .base_url
         .clone()
@@ -313,8 +444,6 @@ pub async fn assistant_turn(
         .model
         .clone()
         .unwrap_or_else(|| "mistral-small-latest".into());
-    let mut messages = vec![json!({"role": "system", "content": build_system_prompt(&state)})];
-    messages.extend(body.messages.iter().cloned());
     let payload = json!({
         "model": model,
         "messages": messages,
@@ -349,46 +478,10 @@ pub async fn assistant_turn(
             "provider returned invalid JSON: {e}"
         )))
     })?;
-    let raw_text = value["choices"][0]["message"]["content"]
+    Ok(value["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
-        .to_string();
-
-    // Parse the tool protocol; fall back to a plain answer when the model
-    // forgot the envelope (never leave the user staring at raw JSON).
-    let (reply_text, actions) = parse_protocol(&raw_text);
-
-    // Queue write actions as proposals; they are NOT applied here.
-    let mut all = read_proposals();
-    let mut queued: Vec<Proposal> = Vec::new();
-    for action in &actions {
-        match action["tool"].as_str() {
-            Some("propose_step_config") => {
-                let step = action["step"].as_str().unwrap_or_default().to_string();
-                if !CONTEXT_STEPS.contains(&step.as_str()) {
-                    continue; // silently ignore unknown steps (log below)
-                }
-                let payload = json!({"tool": "propose_step_config", "step": step, "config": action["config"].clone()});
-                all.push(new_proposal("step_config", Some(step.clone()), &payload));
-                queued.push(all.last().cloned().expect("just pushed"));
-            }
-            Some("propose_goal") => {
-                let payload = json!({"tool": "propose_goal", "goal": action["goal"].clone()});
-                all.push(new_proposal("goal", None, &payload));
-                queued.push(all.last().cloned().expect("just pushed"));
-            }
-            _ => {}
-        }
-    }
-    if !queued.is_empty() {
-        write_proposals(&all)?;
-    }
-
-    Ok(Json(json!({
-        "reply": reply_text,
-        "protocol": if actions.is_empty() { "plain" } else { "json" },
-        "proposals": queued,
-    })))
+        .to_string())
 }
 
 fn new_proposal(kind: &str, step: Option<String>, payload: &Value) -> Proposal {
@@ -458,7 +551,14 @@ fn build_system_prompt(state: &AppState) -> String {
          JSON-Objekt: {\"text\": \"<Antwort>\", \"actions\": [...]}. \
          Für 'actions' gilt: entweder weglassen oder Array mit Einträgen der Form \
          {\"tool\": \"propose_step_config\", \"step\": \"<input|preprocessing|output_settings|processing|curation>\", \"config\": {...}} \
-         oder {\"tool\": \"propose_goal\", \"goal\": {...}}."
+         oder {\"tool\": \"propose_goal\", \"goal\": {...}}. \
+         Willst du selbst Daten nachschauen, kannst du statt zu raten \
+         diese LESE-Aktionen benutzen (das System führt sie aus und zeigt dir \
+         die Ergebnisse, danach antwortest du erneut): \
+         {\"tool\": \"docs_search\", \"query\": \"<Text>\"} — durchsucht den lokalen \
+         spaCy-Doku-Spiegel; \
+         {\"tool\": \"get_data_profile\"} — Datenprofil aller Datasets \
+         (Items, Label-Verteilung, ohne-Text, Duplikate)."
             .to_string(),
     );
 
@@ -777,20 +877,32 @@ pub struct DocsSearchQuery {
 /// `GET /api/assistant/docs/search` — naive substring search over the
 /// mirrored docs; enough for the lookup use case, no index needed.
 pub async fn docs_search(Query(q): Query<DocsSearchQuery>) -> Result<Json<Value>, ApiError> {
-    let needle = q.q.trim().to_lowercase();
+    Ok(Json(docs_search_core(
+        &q.q,
+        q.version.as_deref(),
+        q.limit.unwrap_or(20),
+    )?))
+}
+
+/// Readable full-text search over one docs mirror version. Shared by the
+/// HTTP endpoint and the assistant tool loop.
+fn docs_search_core(q: &str, version: Option<&str>, limit: usize) -> Result<Value, ApiError> {
+    let needle = q.trim().to_lowercase();
     if needle.is_empty() {
         return Err(ApiError(coach_core::CoreError::InvalidQuery(
             "q must not be empty".into(),
         )));
     }
-    let version = q.version.unwrap_or_else(|| newest_mirror());
+    let version = version
+        .map(str::to_string)
+        .unwrap_or_else(newest_mirror);
     let base = docs_root().join(&version);
     if !base.is_dir() {
         return Err(ApiError(coach_core::CoreError::NotFound(format!(
             "no docs mirror for version {version}"
         ))));
     }
-    let limit = q.limit.unwrap_or(20).min(100);
+    let limit = limit.min(100);
     let mut results: Vec<Value> = Vec::new();
     let mut stack = vec![base.clone()];
     while let Some(dir) = stack.pop() {
@@ -826,7 +938,7 @@ pub async fn docs_search(Query(q): Query<DocsSearchQuery>) -> Result<Json<Value>
             }
         }
     }
-    Ok(Json(json!({ "version": version, "matches": results })))
+    Ok(json!({ "version": version, "matches": results }))
 }
 
 fn newest_mirror() -> String {
