@@ -675,6 +675,16 @@ export default function DataRuns() {
     }
   };
 
+  const runArtifacts = (run: DataRun): Array<{ head: string; rows: number }> => {
+    const out: Array<{ head: string; rows: number }> = [];
+    for (const [key, value] of Object.entries(run.results ?? {})) {
+      if (!key.includes("export")) continue;
+      const v = value as { heads?: Array<{ head: string; rows: number }> };
+      for (const h of v.heads ?? []) out.push({ head: h.head, rows: h.rows });
+    }
+    return out;
+  };
+
   const createRun = async () => {
     if (!newRunName.trim()) return;
     setBusy(true);
@@ -941,6 +951,7 @@ export default function DataRuns() {
                 {sortHeader("status", "Status")}
                 <th>Stages</th>
                 <th>Dataset</th>
+                <th>Dateien</th>
                 {sortHeader("updated_at", "Aktualisiert")}
                 <th />
               </tr>
@@ -962,6 +973,24 @@ export default function DataRuns() {
                     {Array.isArray(run.stages) ? run.stages.map((s) => s.kind).join(" → ") : "—"}
                   </td>
                   <td>{run.dataset_id ? `${run.dataset_id.slice(0, 8)}…` : "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {runArtifacts(run).map((a) => (
+                        <a
+                          key={a.head}
+                          className="badge badge-neutral"
+                          href={`/api/datasets/${run.dataset_id}/export/${a.head}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`${a.head}.jsonl (${a.rows} Zeilen) — öffnen`}
+                          style={{ textDecoration: "none" }}
+                        >
+                          {a.head}.jsonl ({a.rows})
+                        </a>
+                      ))}
+                      {runArtifacts(run).length === 0 && "—"}
+                    </div>
+                  </td>
                   <td>{new Date(run.updated_at).toLocaleString()}</td>
                   <td className="field-row" style={{ gap: 6 }}>
                     <Link className="button" to={`/training-data/runs/${run.id}`}>

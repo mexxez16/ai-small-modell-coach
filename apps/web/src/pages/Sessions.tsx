@@ -40,7 +40,7 @@ export default function Sessions() {
   const [runsSearch, setRunsSearch] = useState("");
   const [runsSortDesc, setRunsSortDesc] = useState(true);
   const [modelsList, setModelsList] = useState<Array<{ id: string; name: string }>>([]);
-  const [datasetsList, setDatasetsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [datasetsList, setDatasetsList] = useState<Array<{ id: string; name: string; source_ref?: string }>>([]);
   const [newRunName, setNewRunName] = useState("");
   const [newRunModel, setNewRunModel] = useState("");
   const [newRunDataset, setNewRunDataset] = useState("");
@@ -310,7 +310,7 @@ export default function Sessions() {
               <option value="">Dataset (Training Data) wählen…</option>
               {datasetsList.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name}
+                  {d.name}{d.source_ref?.startsWith("data-run:") ? " (aus Training-Data-Run)" : ""}
                 </option>
               ))}
             </select>

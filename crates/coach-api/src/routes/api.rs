@@ -1849,7 +1849,11 @@ pub async fn export_docbin(
         .header("content-type", "application/octet-stream")
         .header(
             "content-disposition",
-            format!("attachment; filename=\"{dataset_id}.spacy\""),
+            format!(
+                "attachment; filename=\"{}{}.spacy\"",
+                params.get("split").map(|s| format!("{s}.")).unwrap_or_default(),
+                dataset_id
+            ),
         )
         .body(axum::body::Body::from(bytes))
         .map_err(|e| ApiError::from(coach_core::CoreError::Io(std::io::Error::other(e))))
