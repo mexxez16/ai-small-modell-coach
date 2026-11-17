@@ -105,7 +105,7 @@ export default function ReviewDeck({ items, onClose, onDecide, onEditLabel }: Pr
       className="card"
       role="region"
       aria-label="Review-Karte"
-      style={{ maxWidth: 640, margin: "12px auto", padding: "var(--space-5)" }}
+      style={{ width: "100%", maxWidth: "100%", margin: "12px 0", padding: "var(--space-5)" }}
     >
       <div className="field-row" style={{ justifyContent: "space-between" }}>
         <span className="stat-label">

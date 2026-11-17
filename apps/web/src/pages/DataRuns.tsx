@@ -29,8 +29,9 @@ function ReviewCurationBlock({
   onDecide: (itemId: string, action: "approved" | "rejected") => Promise<void>;
   onEditLabel: (itemId: string, label: string) => Promise<void>;
 }) {
-  const [deckOpen, setDeckOpen] = useState(false);
-  const [grouped, setGrouped] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [deckView, setDeckView] = useState(false);
 
   if (!hasDataset) {
     return (
@@ -41,72 +42,119 @@ function ReviewCurationBlock({
   }
 
   const raw = runItems.filter((i) => i.status === "raw");
-  const byKind = (kind: string) => runItems.filter((i) => i.source.includes(kind) || i.label === kind || false);
-  void byKind;
+  const pageCount = Math.max(1, Math.ceil(raw.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const rows = raw.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  const labels = [...new Set(raw.map((i) => i.label))];
 
   return (
-    <div style={{ marginTop: 8 }}>
+    <div>
       <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <span className="stat-label">
-          Zur Sichtung: {raw.length} von {runItems.length} Items (raw) ·
-          {" "}approved: {runItems.filter((i) => i.status === "approved").length} ·
-          {" "}curated: {runItems.filter((i) => i.status === "curated").length} ·
-          {" "}rejected: {runItems.filter((i) => i.status === "rejected").length}
+          Zur Sichtung: {raw.length} von {runItems.length} Items (raw)
         </span>
         <button
           className="button button-primary"
           disabled={raw.length === 0}
-          onClick={() => {
-            setGrouped(null);
-            setDeckOpen((v) => !v);
-          }}
+          onClick={() => setDeckView((v) => !v)}
         >
-          {deckOpen && !grouped ? "Review schließen" : "Review starten"}
+          {deckView ? "Tabellen-Review" : "Karten-Review starten"}
+        </button>
+        <select
+          className="select"
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(Number(e.target.value));
+            setPage(0);
+          }}
+          aria-label="Einträge pro Seite"
+          title="Einträge pro Seite"
+        >
+          <option value={10}>10</option>
+          <option value={20}>20</option>
+          <option value={50}>50</option>
+        </select>
+        <span className="stat-label">
+          Seite {safePage + 1}/{pageCount}
+        </span>
+        <button className="button button-ghost" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+          ←
+        </button>
+        <button
+          className="button button-ghost"
+          disabled={safePage >= pageCount - 1}
+          onClick={() => setPage(safePage + 1)}
+        >
+          →
         </button>
       </div>
-      {raw.length > 0 && (
-      <div style={{
-        marginTop: 10, padding: 12, border: "2px solid var(--color-accent)",
-        borderRadius: "var(--radius-md)", background: "var(--color-accent-subtle, rgba(59,91,219,0.06))",
-      }}>
-        <b>Review-Deck {grouped ? `— ${grouped}` : ""}</b>
-        {[...new Set(raw.map((i) => i.label))].slice(0, 8).map((label) => (
-        <div key={label} className="field-row" style={{ gap: 8, marginTop: 4 }}>
-          <span className="stat-label">
-            {label}: {raw.filter((i) => i.label === label).length} offen
-          </span>
-          <button
-            className="button"
-            onClick={() => {
-              setGrouped(label);
-              setDeckOpen(true);
-            }}
-          >
-            Bunch reviewen
-          </button>
-          <button
-            className="button button-ghost"
-            onClick={() =>
-              void Promise.all(
-                raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")),
-              )
-            }
-            title="Alle offenen Items dieses Labels approven"
-          >
-            Bunch approven
-          </button>
-        </div>
-        ))}
-        {deckOpen && (
+
+      {deckView && (
         <ReviewDeck
-          items={(grouped ? raw.filter((i) => i.label === grouped) : raw) as never}
-          onClose={() => setDeckOpen(false)}
+          items={raw as never}
+          onClose={() => setDeckView(false)}
           onDecide={onDecide}
           onEditLabel={onEditLabel}
         />
-        )}
-      </div>
       )}
+
+      <table className="table" style={{ marginTop: 8 }}>
+        <thead>
+          <tr>
+            <th>Inhalt</th>
+            <th>Label</th>
+            <th style={{ width: 210 }}>Aktionen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item) => (
+            <tr key={item.id}>
+              <td style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {item.text ?? `${item.subject ?? "?"} — ${item.predicate ?? "?"} → ${item.object ?? "?"}`}
+              </td>
+              <td>
+                <span className="badge badge-neutral">{item.label}</span>
+              </td>
+              <td>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  <button className="button button-primary" onClick={() => void onDecide(item.id, "approved")}>
+                    Genehmigen
+                  </button>
+                  <button className="button" onClick={() => void onDecide(item.id, "rejected")}>
+                    Verwerfen
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={3}>Keine offenen Items.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      <div style={{ marginTop: 12 }}>
+        <b>Sammel-Aktionen pro Label</b>
+        {labels.map((label) => (
+          <div key={label} className="field-row" style={{ gap: 8, marginTop: 4, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+            <div className="field-row" style={{ gap: 8 }}>
+              <span className="stat-label" style={{ minWidth: 140 }}>
+                {label}: {raw.filter((i) => i.label === label).length} offen
+              </span>
+              <button
+                className="button"
+                onClick={() =>
+                  void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")))
+                }
+              >
+                Bunch approven
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1047,7 +1095,7 @@ export default function DataRuns() {
                       type="checkbox"
                       checked={cfg.exampleTypes.includes(t.key)}
                       onChange={(e) =>
-                        set(
+                        updateAndPersist(
                           "exampleTypes",
                           e.target.checked
                             ? [...cfg.exampleTypes, t.key]
