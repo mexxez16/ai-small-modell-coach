@@ -1260,24 +1260,51 @@ export default function DataRuns() {
                 )}
               </p>
               {detail.results && Object.keys(detail.results).length > 0 ? (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Stage</th>
-                      <th>Kennzahlen</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(detail.results).map(([key, value]) => (
-                      <tr key={key}>
-                        <td style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{key}</td>
-                        <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, maxWidth: 520, overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {JSON.stringify(value)}
-                        </td>
-                      </tr>
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 13,
+                    background: "var(--color-bg, #14161a)",
+                    border: "1px solid var(--color-border-strong)",
+                    borderRadius: "var(--radius-md)",
+                    padding: 12,
+                    maxHeight: 320,
+                    overflow: "auto",
+                  }}
+                >
+                  {(detail.results["errors"] as string[] | undefined)?.map((e, i) => (
+                    <div key={`err-${i}`} style={{ color: "var(--color-danger)", fontWeight: 600 }}>
+                      [FEHLER] {e}
+                    </div>
+                  ))}
+                  {Object.entries(detail.results)
+                    .filter(([k]) => k !== "errors")
+                    .map(([key, value]) => (
+                      <details key={key} style={{ margin: "4px 0" }}>
+                        <summary>
+                          {key}{" "}
+                          <span style={{ color: "var(--color-text-faint)" }}>
+                            {JSON.stringify(
+                              (value as Record<string, unknown>)
+                                ? Object.fromEntries(
+                                    Object.entries(value as Record<string, unknown>)
+                                      .filter(([k]) => k !== "stats" && k !== "skipped")
+                                      .slice(0, 4),
+                                  )
+                                : value,
+                            )}
+                          </span>
+                        </summary>
+                        <pre style={{ margin: "4px 0 0 16px", whiteSpace: "pre-wrap", fontSize: 12 }}>
+                          {JSON.stringify(value, null, 2)}
+                        </pre>
+                      </details>
                     ))}
-                  </tbody>
-                </table>
+                  {!detail.results["errors"] && (
+                    <div style={{ color: "var(--color-success)" }}>[OK] alle Stages abgeschlossen</div>
+                  )}
+                </div>
               ) : (
                 <div className="empty-state">Noch nicht ausgeführt — „Speichern + Ausführen" oben.</div>
               )}
