@@ -90,7 +90,7 @@ pub trait Storage: Send + Sync {
     fn get_conversion_job(&self, id: &str) -> Result<ConversionJob>;
     fn list_conversion_jobs(&self, dataset_id: &str) -> Result<Vec<ConversionJob>>;
 
-    // Scopes (saved AimQL queries)
+    // Scopes (saved run queries)
     fn put_scope(&self, scope: Scope) -> Result<Scope>;
     fn list_scopes(&self) -> Result<Vec<Scope>>;
     fn delete_scope(&self, id: &str) -> Result<()>;
@@ -690,7 +690,7 @@ mod tests {
             },
             label: "train-example".into(),
             kind: DataItemKind::Example,
-            source: "BFO.json#E27".into(),
+            source: "entities.json#E27".into(),
             status: DataItemStatus::Raw,
             split: DataSplit::Train,
             assignee: None,

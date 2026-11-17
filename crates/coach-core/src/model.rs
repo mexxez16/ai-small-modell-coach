@@ -139,7 +139,7 @@ pub struct Visualization {
 pub struct Dataset {
     pub id: String,
     pub name: String,
-    /// Provenance, e.g. "ssot/BFO_Entity_Classification.json#sha256:…"
+    /// Provenance, e.g. "sources/entity_classification.json#sha256:…"
     pub source_ref: String,
     pub schema_version: u32,
     pub created_at: DateTime<Utc>,
@@ -203,7 +203,7 @@ pub struct DataItem {
     /// Canonical, kebab-case label.
     pub label: String,
     pub kind: DataItemKind,
-    /// Provenance, e.g. "BFO_Entity_Classification.json#E27".
+    /// Provenance, e.g. "entity_classification.json#E27".
     pub source: String,
     pub status: DataItemStatus,
     pub split: DataSplit,
@@ -272,7 +272,7 @@ pub enum JobStatus {
     Failed,
 }
 
-/// An SSOT -> seed JSONL -> DocBin conversion job.
+/// A curated-dataset conversion job (JSONL -> DocBin).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ConversionJob {
@@ -322,7 +322,7 @@ pub struct ModelEntry {
     pub created_at: DateTime<Utc>,
 }
 
-/// A saved AimQL query ("scope") — a named, shareable Runs-dashboard filter.
+/// A saved run query ("scope") — a named, shareable Runs-dashboard filter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct Scope {
@@ -345,7 +345,7 @@ pub struct DataSession {
 }
 
 /// A training-data run: a fully configurable curation pipeline from sources
-/// (e.g. SSOT copies) to a curated dataset. Stages are user-defined
+/// (e.g. structured JSON sources) to a curated dataset. Stages are user-defined
 /// (`config.stages`); each execution records per-stage stats in `results`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -356,7 +356,8 @@ pub struct DataRun {
     /// "draft" | "completed" | "failed"
     pub status: String,
     /// Stage list in execution order; each stage:
-    /// { kind: "ssot_import"|"chunk"|"ai_annotate"|"export", config: {...} }
+    /// { kind: "structured_import"|"chunk"|"ai_annotate"|"export", config: {...} }
+    /// ("ssot_import" is accepted as a legacy alias on execution.)
     pub stages: serde_json::Value,
     /// Dataset holding the produced items.
     pub dataset_id: Option<String>,

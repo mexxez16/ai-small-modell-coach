@@ -2,11 +2,3 @@ AI Small Modell Coach
 Copyright (c) 2026 Kenichi-Maximilian Pestemer
 
 Released under the MIT License (see LICENSE).
-
-This project is a clean-room implementation. It does not copy code from the
-Aim experiment tracker (https://github.com/aimhubio/aim) or the Aim-spaCy
-integration (https://github.com/aimhubio/aim-spacy). Those repositories were
-used only as read-only references to establish feature scope, terminology,
-and UX expectations. In the unlikely event that a snippet ever is reused from
-either of them, it must keep its Apache-2.0 copyright notice and be recorded
-in this NOTICE file.

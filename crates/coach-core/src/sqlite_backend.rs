@@ -1620,7 +1620,7 @@ mod tests {
             },
             label: "train-example".into(),
             kind: DataItemKind::Example,
-            source: "bfo.json#E27".into(),
+            source: "entities.json#E27".into(),
             status: DataItemStatus::Raw,
             split: DataSplit::Train,
             assignee: None,

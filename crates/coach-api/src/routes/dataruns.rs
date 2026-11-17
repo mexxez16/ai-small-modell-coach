@@ -2,9 +2,9 @@
 //!
 //! A DataRun is a user-defined list of stages; `execute` walks them in order
 //! and writes produced items (with kind + provenance) into the run's dataset.
-//! Stage kinds mirror the SGDiRAG Track B_1 reference pipeline:
+//! Stage kinds:
 //!
-//! - `ssot_import`: structured JSON source (entities with
+//! - `structured_import`: structured JSON source (entities with
 //!   examples/negative_examples/contrastive_examples, relations with
 //!   examples) -> data items with kind example/negative/contrastive/pair,
 //!   kebab labels, skipped-with-reason records, per-kind stats.
@@ -205,17 +205,17 @@ fn kebab(name: &str) -> String {
     out
 }
 
-/// Result of one ssot_import extraction pass.
+/// Result of one structured-import extraction pass.
 struct ExtractOutput {
     items: Vec<DataItem>,
     skipped: Vec<Value>,
     stats: Value,
 }
 
-/// Structured SSOT extractor: understands the BFO-style entity/relation
-/// registries (Track B_1 reference layout). Unknown shapes are rejected with
+/// Structured-import extractor: understands the entity/relation
+/// registry layout (see below). Unknown shapes are rejected with
 /// a descriptive error — better than silently producing an empty dataset.
-fn extract_ssot(content: &str, dataset_id: &str, label_map: &Value) -> Result<ExtractOutput, CoreError> {
+fn extract_structured_import(content: &str, dataset_id: &str, label_map: &Value) -> Result<ExtractOutput, CoreError> {
     use std::collections::BTreeMap;
 
     let root: Value = serde_json::from_str(content).map_err(|e| {
@@ -265,10 +265,15 @@ fn extract_ssot(content: &str, dataset_id: &str, label_map: &Value) -> Result<Ex
 
     let mut matched = false;
 
-    // Entities: {code -> {bfo_class, examples, negative_examples, contrastive_examples}}
+    // Entities: {code -> {class, examples, negative_examples, contrastive_examples}}
+    // ("bfo_class" is accepted as a legacy key for pre-existing sources.)
     if let Some(entities) = root.get("entities").and_then(|v| v.as_object()) {
         for (code, ent) in entities {
-            let class = ent.get("bfo_class").and_then(|v| v.as_str()).unwrap_or(code);
+            let class = ent
+                .get("class")
+                .or_else(|| ent.get("bfo_class"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(code);
             let label = fallback_label(code, class);
             let src = format!("entity#{code}");
             let take_strs = |key: &str| -> Vec<String> {
@@ -357,7 +362,7 @@ fn extract_ssot(content: &str, dataset_id: &str, label_map: &Value) -> Result<Ex
 
     if !matched {
         return Err(CoreError::InvalidQuery(
-            "source JSON matches no known SSOT shape (expected top-level 'entities' and/or 'relations' objects)".into(),
+            "source JSON matches no known import shape (expected top-level 'entities' and/or 'relations' objects)".into(),
         ));
     }
 
@@ -504,7 +509,7 @@ pub async fn execute_data_run(
         let kind = stage.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         let config = stage.get("config").cloned().unwrap_or(json!({}));
         let outcome: Result<Value, CoreError> = match kind {
-            "ssot_import" => self::stage_ssot_import(
+            "structured_import" | "ssot_import" => self::stage_structured_import(
                 &state, &config, &dataset_id, &mut existing_texts,
             ),
             "chunk" => self::stage_chunk(
@@ -543,7 +548,7 @@ pub async fn execute_data_run(
 
 // --- Stage implementations ---------------------------------------------------
 
-fn stage_ssot_import(
+fn stage_structured_import(
     state: &crate::state::AppState,
     config: &Value,
     dataset_id: &str,
@@ -552,10 +557,10 @@ fn stage_ssot_import(
     let source_id = config
         .get("source_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| CoreError::InvalidQuery("ssot_import needs source_id".into()))?;
+        .ok_or_else(|| CoreError::InvalidQuery("structured_import needs source_id".into()))?;
     let doc = state.storage.get_source_doc(source_id)?;
     let label_map = config.get("label_overrides").cloned().unwrap_or(json!({}));
-    let out = extract_ssot(&doc.content, dataset_id, &label_map)?;
+    let out = extract_structured_import(&doc.content, dataset_id, &label_map)?;
     let mut added = 0usize;
     for item in &out.items {
         let text_key = item
@@ -574,7 +579,7 @@ fn stage_ssot_import(
             id: new_id(),
             item_id: item.id.clone(),
             timestamp: now(),
-            actor: "ssot-import".into(),
+            actor: "structured-import".into(),
             field: "created".into(),
             old_value: Value::Null,
             new_value: json!({"kind": item.kind, "source": item.source}),
@@ -699,8 +704,8 @@ fn stage_export(
     config: &Value,
     dataset_id: &str,
 ) -> Result<Value, CoreError> {
-    // Default heads mirror the Track B_1 reference: bfo_type (examples),
-    // relation_type (pairs), entity_relevance (examples + negatives).
+    // Default heads: type (examples), relation (pairs),
+    // relevance (examples + negatives).
     let heads = config
         .get("heads")
         .and_then(|v| v.as_array())

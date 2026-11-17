@@ -12,7 +12,7 @@ type QueryResult = {
 type SortKey = "name" | "status" | "model" | "created_at";
 
 /** Runs overview: sortable/filterable table of every training run, plus the
- * advanced query box (AimQL-style) and saved scopes. */
+ * advanced query box and saved scopes. */
 export default function Runs() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [sessions, setSessions] = useState<Array<{ id: string; name: string }>>([]);

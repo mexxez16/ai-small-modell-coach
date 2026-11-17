@@ -53,7 +53,7 @@ def build_config(tmp_path: Path, stub_url: str):
     training["patience"] = -1
     training["eval_frequency"] = 100000  # skip in-training eval entirely
     training["logger"] = {
-        "@loggers": "coach.AimLogger.v1",
+        "@loggers": "coach.Logger.v1",
         "run_name": "smoke-textcat",
         "api_url": stub_url,
     }

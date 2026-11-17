@@ -19,7 +19,7 @@ The Rust side never imports spaCy. All spaCy work happens in
 
 Two ways to enable:
 
-1. Entry point (package `spacy_loggers`, name `coach.AimLogger.v1`).
+1. Entry point (package `spacy_loggers`, name `coach.Logger.v1`).
 2. Direct reference in a training config:
 
 ```toml
@@ -29,7 +29,7 @@ run_name = "textcat-baseline"
 api_url = "http://127.0.0.1:8901"
 # optional:
 # session_id = "…"
-# viz_path = "sample_docs.spacy"     # DocBin of sample docs (aim-spacy convention)
+# viz_path = "sample_docs.spacy"     # DocBin of sample documents
 # model_log_interval = 100           # render viz every N steps
 # viz_style = "ent"                  # ent | dep | span
 # viz_n_docs = 3
@@ -88,8 +88,7 @@ minify=True, jupyter=False, options=options)`.
 which proxies to this worker (`/api/visualize`), validates content type and
 caps response size. PNG export (Visualize page and training-time renders) uses
 pure-Python **cairosvg** — there is no chromium, html2image or headless
-browser dependency anywhere in the stack (a deliberate fix of upstream
-aim-spacy's eager `html2image` import).
+browser dependency anywhere in the stack.
 
 ### Options whitelist
 

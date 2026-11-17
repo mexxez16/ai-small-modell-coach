@@ -70,9 +70,9 @@ Visualize page via "attach to run/session".
 |---|---|---|
 | id | uuid | |
 | name | string | |
-| source_ref | string | provenance, e.g. `ssot/BFO_Entity_Classification.json#sha256:…` |
+| source_ref | string | provenance, e.g. `sources/entity_classification.json#sha256:…` |
 | schema_version | u32 | DataItem schema version |
-| versions | DatasetVersion[] | hash chain of the SSOT-derived dataset states |
+| versions | DatasetVersion[] | hash chain of the dataset states |
 
 ### DataItem
 | field | type | notes |
@@ -82,7 +82,7 @@ Visualize page via "attach to run/session".
 | text / subject / predicate / object | string? | input fields; triples use s/p/o |
 | label | string | **canonical kebab-case**, single label space across tracks |
 | kind | example, negative, contrastive, pair, other(String) | |
-| source | string | e.g. `BFO_Entity_Classification.json#E27` |
+| source | string | e.g. `entity_classification.json#E27` |
 | status | raw → curated → approved / rejected | review state machine |
 | split | train / dev / eval / unassigned | |
 | assignee / notes | string? | |
@@ -107,7 +107,7 @@ appends a `DataItemHistory` row.
 |---|---|---|
 | id | uuid | |
 | dataset_id | uuid | |
-| pipeline | string[] | e.g. `["ssot→jsonl", "jsonl→docbin"]` |
+| pipeline | string[] | e.g. `["source→jsonl", "jsonl→docbin"]` |
 | params | json | `{dev_ratio, seed, stratify: true}` |
 | status | pending, running, completed, failed | progress streams over `/ws/jobs` |
 | artifacts | json[] | file refs + sha256 |

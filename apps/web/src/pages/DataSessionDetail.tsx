@@ -4,7 +4,7 @@ import { api, type DataSession, type DataRun } from "../api/client";
 import HelpBubble from "../components/HelpBubble";
 
 const STAGE_HINTS: Record<string, string> = {
-  ssot_import: "Strukturierter JSON-Import (Entities/Relations → Items)",
+  structured_import: "Strukturierter JSON-Import (Entities/Relations → Items)",
   chunk: "Text-Chunking einer Quelle",
   ai_annotate: "KI-Annotation (OpenAI-kompatibler Provider)",
   export: "Per-Head-JSONL-Artefakte",
@@ -48,7 +48,7 @@ export default function DataSessionDetail() {
     if (!id || !runName.trim()) return;
     setBusy(true);
     try {
-      const stages = preset === "ssot" ? [{ kind: "ssot_import" as const, config: {} }, { kind: "export" as const, config: {} }] : [];
+      const stages = preset === "import" ? [{ kind: "structured_import" as const, config: {} }, { kind: "export" as const, config: {} }] : [];
       await api.createDataRun(runName.trim(), id, stages);
       setRunName("");
       await refresh();
@@ -99,7 +99,7 @@ export default function DataSessionDetail() {
           <button
             className="button button-primary"
             disabled={busy || !runName.trim()}
-            onClick={() => void createRun("ssot")}
+            onClick={() => void createRun("import")}
             title="Stages: strukturierter Import + Export — im Run-Editor frei konfigurierbar"
           >
             Mit Import-Pipeline anlegen

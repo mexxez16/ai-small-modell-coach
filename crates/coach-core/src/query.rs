@@ -1,4 +1,4 @@
-//! AimQL-like query language for runs and metrics.
+//! Run query language for runs and metrics.
 //!
 //! Grammar (initial scope):
 //!
@@ -173,7 +173,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-/// Parse an AimQL-like query string. An empty/whitespace query matches
+/// Parse a run query string. An empty/whitespace query matches
 /// everything.
 pub fn parse(input: &str) -> Result<Query> {
     let input = input.trim();

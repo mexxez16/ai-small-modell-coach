@@ -19,7 +19,7 @@ and a deliberately tiny Python layer for everything spaCy-specific.
 │ crates/coach-core     │         │ python render worker    │
 │ domain model          │         │ (coach_spacy.render,    │
 │ storage traits        │         │  FastAPI/uvicorn, spaCy)│
-│ AimQL-ish query AST   │         └─────────────────────────┘
+│ Run query AST         │         └─────────────────────────┘
 │ SQLite (WAL)          │
 └───────▲───────────────┘
         │ abi3 wheel (PyO3/maturin)
@@ -37,9 +37,9 @@ All entities (runs, metric points, image metadata, curation items, audit
 history) persist to a single SQLite database at
 `<COACH_DATA_DIR>/coach.db` (`rusqlite`, bundled C amalgamation). Consequences:
 
-- No `aimrocks` and therefore **no native wheel blocker on Python >= 3.13**.
-  (Upstream `aim` depends on `aimrocks`, which historically lagged new
-  Python releases; this project avoids that class of problem entirely.)
+- No RocksDB-class native dependency — **no native wheel blocker on
+  Python >= 3.13** ever, because the bundled SQLite C amalgamation compiles
+  anywhere and never lags new Python releases.
 - Every mutation is an incremental write (WAL journal, `synchronous=NORMAL`,
   prepared statements) — no whole-store rewrites when training metrics stream
   in.
@@ -61,7 +61,7 @@ history) persist to a single SQLite database at
 Python exists only where spaCy lives:
 
 1. `coach_spacy.logger` — the training logger (`spacy_loggers` entry point
-   `coach.AimLogger.v1`, usable directly as `coach_spacy.logger:coach_logger`).
+   `coach.Logger.v1`, usable directly as `coach_spacy.logger:coach_logger`).
 2. `coach_spacy.render` — the displaCy render worker
    (`python -m coach_spacy.render --model …`).
 

@@ -8,7 +8,7 @@ import ReviewDeck from "../components/ReviewDeck";
  * Training-data runs: each run is a freely configurable curation pipeline.
  * The editor presents it as six sections (input → preprocessing → output
  * settings → processing → curation → results); on save these map back onto
- * the run's stage list (ssot_import, chunk, ai_annotate, export).
+ * the run's stage list (structured_import, chunk, ai_annotate, export).
  */
 
 /*** Curation block of a data-run: becomes visible once the pipeline produced
@@ -405,7 +405,7 @@ const DEFAULT_CONFIG: RunConfig = {
 function stagesFromConfig(c: RunConfig): DataRunStage[] {
   const stages: DataRunStage[] = [];
   if (c.sourceId) {
-    stages.push({ kind: "ssot_import", config: { source_id: c.sourceId, label_overrides: {} } });
+    stages.push({ kind: "structured_import", config: { source_id: c.sourceId, label_overrides: {} } });
   }
   if (c.useChunk && c.sourceId) {
     stages.push({
@@ -449,7 +449,7 @@ function configFromStages(stages: DataRunStage[]): RunConfig {
   const c: RunConfig = { ...DEFAULT_CONFIG };
   for (const stage of stages) {
     const cfg = stage.config ?? {};
-    if (stage.kind === "ssot_import") {
+    if (stage.kind === "structured_import" || stage.kind === "ssot_import") {
       c.sourceId = String(cfg.source_id ?? "");
     } else if (stage.kind === "chunk") {
       c.useChunk = true;
@@ -652,8 +652,8 @@ export default function DataRuns() {
         name: "beispiel-case-testlabor.json",
         content: JSON.stringify({
           entities: {
-            "messgerät": { bfo_class: "Material Entity", examples: ["Thermometer Typ K im Labor 3", "Kalibriertes Multimeter auf Werkbank 2"], negative_examples: ["die Idee eines Messgeräts"], contrastive_examples: ["Das Demogerät ist ausgeschaltet, bleibt aber ein Messgerät"] },
-            "kalibrierung": { bfo_class: "Process", examples: ["Jährliche Kalibrierung des Multimeters", "Kalibrierung vor jedem Einsatz"], negative_examples: ["die Kalibrier-Erinnerung im Kalender"], contrastive_examples: ["Eine geplante, aber noch nicht durchgeführte Kalibrierung"] },
+            "messgerät": { class: "Material Entity", examples: ["Thermometer Typ K im Labor 3", "Kalibriertes Multimeter auf Werkbank 2"], negative_examples: ["die Idee eines Messgeräts"], contrastive_examples: ["Das Demogerät ist ausgeschaltet, bleibt aber ein Messgerät"] },
+            "kalibrierung": { class: "Process", examples: ["Jährliche Kalibrierung des Multimeters", "Kalibrierung vor jedem Einsatz"], negative_examples: ["die Kalibrier-Erinnerung im Kalender"], contrastive_examples: ["Eine geplante, aber noch nicht durchgeführte Kalibrierung"] },
           },
           relations: {
             "misst": { relation_name: "misst", edge_relation_type: "measures", examples: ["das Multimeter misst Spannung", "Thermometer misst Temperatur im Labor"] },
@@ -692,16 +692,24 @@ export default function DataRuns() {
     try {
       const run = await api.executeDataRun(id);
       const entries = Object.entries(run.results ?? {}).filter(([k]) => k !== "errors");
-      const summary = entries
-        .map(([k, v]) => {
-          const obj = v as Record<string, unknown>;
-          return `${k}: added=${obj.added ?? "—"} heads=${Array.isArray(obj.heads) ? obj.heads.length : "—"}`;
-        })
-        .join(" · ");
-      setResult(summary || `Status: ${run.status}`);
+      const errors = (run.results?.["errors"] as string[] | undefined) ?? [];
+      if (run.status === "failed" || errors.length > 0) {
+        setError(
+          `Run fehlgeschlagen (${errors.length} Stage-Fehler) — Details im Run-Log unten: ` +
+            errors.slice(0, 3).join(" | "),
+        );
+      } else {
+        const summary = entries
+          .map(([k, v]) => {
+            const obj = v as Record<string, unknown>;
+            return `${k}: added=${obj.added ?? "—"} heads=${Array.isArray(obj.heads) ? obj.heads.length : "—"}`;
+          })
+          .join(" · ");
+        setResult(`Run abgeschlossen: ${summary || run.status}`);
+      }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(`Run-Execution fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(false);
     }

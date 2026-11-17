@@ -706,7 +706,7 @@ mod tests {
 
     #[tokio::test]
 
-    async fn query_parses_aimql() {
+    async fn query_parses() {
 
         let app = build_router(AppState::new(AppConfig {
 

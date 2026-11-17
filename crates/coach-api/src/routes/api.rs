@@ -160,7 +160,7 @@ pub struct MetricPointDto {
     #[serde(default)]
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
-/// AimQL-like run query, e.g. `run.name == "x" and metrics.cats_score > 0.9`.
+/// Structured run query, e.g. `run.name == "x" and metrics.cats_score > 0.9`.
 /// The scaffold parses and echoes the parsed AST; metric evaluation lands
 /// with the Parquet/DuckDB backend.
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
@@ -190,7 +190,7 @@ pub async fn query_runs(
     })))
 }
 
-/// Evaluate a parsed AimQL query against a run. Left-hand paths resolve to
+/// Evaluate a parsed query against a run. Left-hand paths resolve to
 /// `metrics.<name>` (latest recorded value), `run.<field>` and dotted
 /// `hparams.…` navigation. Metric values are fetched through the storage
 /// trait only — no store-specific access.
@@ -901,7 +901,7 @@ fn stratified_key(item_id: &str, seed: u64) -> u64 {
     h
 }
 
-/// Run the SSOT-derived curation readiness pipeline:
+/// Run the dataset curation-readiness pipeline:
 /// assign a stratified train/dev split over approved items
 /// (`POST /api/datasets/{id}/conversions`, body: dev_ratio, seed).
 #[utoipa::path(post, path = "/api/datasets/{id}/conversions", responses((status = 200, body = ConversionJob)))]

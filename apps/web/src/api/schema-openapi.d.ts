@@ -168,7 +168,7 @@ export interface components {
             value: number;
         };
         /**
-         * @description AimQL-like run query, e.g. `run.name == "x" and metrics.cats_score > 0.9`.
+         * @description Structured run query, e.g. `run.name == "x" and metrics.cats_score > 0.9`.
          *     The scaffold parses and echoes the parsed AST; metric evaluation lands
          *     with the Parquet/DuckDB backend.
          */

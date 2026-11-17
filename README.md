@@ -14,7 +14,7 @@ visualizer in a single app, driven from a built-in AI chat and terminal.
 - **Runs & metrics** — create runs from the UI or log them straight from your
   spaCy training loop; metrics stream in over WebSocket and land in an
   embedded SQLite database (WAL mode, incremental writes, no external server).
-- **AimQL-style queries** — filter and compare runs with a query AST
+- **Run query engine** — filter and compare runs with a query AST
   (`/api/query`), group runs into **sessions** and compare them.
 - **Images** — attach example images/metadata to runs and browse them.
 
@@ -64,7 +64,7 @@ visualizer in a single app, driven from a built-in AI chat and terminal.
 │ crates/coach-core     │         │ python render worker    │
 │ domain model          │         │ (coach_spacy.render,    │
 │ storage traits        │         │  FastAPI/uvicorn, spaCy)│
-│ AimQL-ish query AST   │         └─────────────────────────┘
+│ Run query AST         │         └─────────────────────────┘
 │ SQLite (WAL)          │
 └───────▲───────────────┘
         │ abi3 wheel (PyO3/maturin)
@@ -77,8 +77,8 @@ visualizer in a single app, driven from a built-in AI chat and terminal.
 Why this shape:
 
 - **One embedded SQLite database** (`<COACH_DATA_DIR>/coach.db`, bundled
-  rusqlite): no RocksDB, no external database server, no `aimrocks`-style
-  native wheel blockers on new Python releases. Legacy per-file JSON
+  rusqlite): no RocksDB, no external database server, so new Python
+  releases can never be blocked by a native dependency. Legacy per-file JSON
   snapshots migrate automatically on first boot.
 - **The Python layer is tiny by design** — only the spaCy logger (registered
   as a spaCy training logger entry point) and the displaCy render worker.
@@ -167,13 +167,6 @@ over `/ws/metrics`, `/ws/chat`, `/ws/jobs` and `/ws/terminal`.
 - [`docs/SPACY_INTEGRATION.md`](docs/SPACY_INTEGRATION.md) — logger and
   visualizer integration details
 - [`python/coach_spacy/README.md`](python/coach_spacy/README.md) — SDK usage
-
-## Attribution
-
-The upstream [`aimhubio/aim`](https://github.com/aimhubio/aim) and
-[`aimhubio/aim-spacy`](https://github.com/aimhubio/aim-spacy) repositories are
-used as **look-only references** for scope and UX; no code is derived from
-them (see [`NOTICE`](NOTICE)).
 
 ## License
 

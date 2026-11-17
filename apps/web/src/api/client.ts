@@ -162,7 +162,7 @@ export type DataSession = {
 };
 
 export type DataRunStage = {
-  kind: "ssot_import" | "chunk" | "ai_annotate" | "export";
+  kind: "structured_import" | "ssot_import" | "chunk" | "ai_annotate" | "export";
   config: Record<string, unknown>;
 };
 

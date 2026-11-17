@@ -104,7 +104,7 @@ export const helpTexts: Record<string, HelpEntry> = {
   "pipeline.output": {
     title: "Ausgabe eines Runs",
     body: "Nach der Ausführung findest du hier je Stage die Kennzahlen (hinzugefügt, übersprungen, Klassen) und Links: JSONL-Export und Workbench zur Sichtung der erzeugten Items. Das Dataset taucht danach als wählbarer Datensatz in Finetuning-Runs auf.",
-    example: "stage_0_ssot_import: added=42 · stage_3_export: heads=3",
+    example: "stage_0_structured_import: added=42 · stage_3_export: heads=3",
   },
 };
 

@@ -1,6 +1,6 @@
 """spaCy training logger for AI Small Modell Coach.
 
-Clean-room implementation of the aim-spacy logger protocol for coach-api.
+Training logger bridging spaCy to the coach-api backend.
 
 Usage in a spaCy training config::
 
@@ -10,7 +10,7 @@ Usage in a spaCy training config::
     api_url = "http://127.0.0.1:8901"
 
 Also registered under the ``spacy_loggers`` entry point group as
-``coach.AimLogger.v1``.
+``coach.Logger.v1``.
 """
 
 from __future__ import annotations
@@ -89,8 +89,8 @@ def coach_logger(
         )
         run_id: str = run["id"]
 
-        # Sample docs for training-time visualization (same viz_path
-        # convention as aim-spacy: a .spacy DocBin of sample documents).
+        # Sample docs for training-time visualization (viz_path: a
+        # .spacy DocBin of sample documents).
         viz_docs = []
         if viz_path and model_log_interval:
             viz_docs = _load_viz_docs(nlp, viz_path, viz_n_docs)
@@ -228,7 +228,7 @@ def _register_direct_reference() -> None:
 
         registry.loggers("coach_spacy.logger:coach_logger", func=coach_logger)
     except Exception:
-        # Entry-point usage (`coach.AimLogger.v1`) still works if spaCy's
+        # Entry-point usage (`coach.Logger.v1`) still works if spaCy's
         # registry layout changes.
         pass
 

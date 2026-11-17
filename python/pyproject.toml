@@ -19,14 +19,13 @@ classifiers = [
 
 [project.optional-dependencies]
 # PNG export for training-time visualizations. Pure-Python wheels only:
-# no chromium, no html2image (unlike upstream aim-spacy, whose eager
-# html2image import broke environments without a browser).
+# no chromium, no html2image.
 viz = ["cairosvg"]
 worker = ["fastapi", "uvicorn"]
 dev = ["pytest", "httpx"]
 
 [project.entry-points."spacy_loggers"]
-"coach.AimLogger.v1" = "coach_spacy.logger:coach_logger"
+"coach.Logger.v1" = "coach_spacy.logger:coach_logger"
 
 [tool.setuptools.packages.find]
 include = ["coach_spacy*"]
