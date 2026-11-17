@@ -298,7 +298,7 @@ fn extract_structured_import(content: &str, dataset_id: &str, label_map: &Value)
                      &mut items, &mut per_kind, &mut per_label);
             }
             for text in take_strs("contrastive_examples") {
-                push(dataset_id, DataItemKind::Contrastive, String::new(),
+                push(dataset_id, DataItemKind::Contrastive, label.clone(),
                      InputFields { text: Some(text), ..Default::default() }, src.clone(),
                      &mut items, &mut per_kind, &mut per_label);
             }
@@ -502,7 +502,15 @@ pub async fn execute_data_run(
         .storage
         .list_data_items(&dataset_id, None)?
         .into_iter()
-        .filter_map(|i| i.input_fields.text)
+        .filter_map(|i| {
+            if i.input_fields.text.is_some() {
+                i.input_fields.text
+            } else if i.input_fields.subject.is_some() {
+                Some(triple_text(&i))
+            } else {
+                None
+            }
+        })
         .collect::<std::collections::HashSet<_>>();
 
     for (idx, stage) in stage_list.iter().enumerate() {
