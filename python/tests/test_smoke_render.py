@@ -141,3 +141,45 @@ def test_options_whitelist_rejects_injection():
         "distance": 120,
         "compact": True,
     }
+
+
+def test_convert_docbin_roundtrip(render_worker):
+    """DocBin export: text items -> .spacy bytes -> reload with spaCy."""
+    items = [
+        {"text": "The cat sat on the mat.", "label": "neutral", "split": "train"},
+        {"text": "I absolutely love this!", "label": "positive", "split": "train"},
+        {"text": "Terrible experience.", "label": "negative", "split": "dev"},
+        {"text": "", "label": "broken", "split": "train"},  # skipped
+    ]
+    status, payload = _post_docbin(render_worker, items)
+    assert status == 200, payload
+    assert payload["stats"]["counts"]["train"] == 2
+    assert payload["stats"]["counts"]["dev"] == 1
+    assert len(payload["stats"]["skipped"]) == 1
+
+    # Reload the returned DocBin with spaCy and check label supervision.
+    import base64
+
+    from spacy.tokens import DocBin
+
+    docbin = DocBin().from_bytes(base64.b64decode(payload["docbin_b64"]))
+    nlp = __import__("spacy").blank("en")
+    docs = list(docbin.get_docs(nlp.vocab))
+    assert len(docs) == 3
+    cats = [set(doc.cats) for doc in docs]
+    assert {"neutral"} in cats
+    assert any("negative" in c for c in cats)
+
+
+def _post_docbin(base: str, items: list) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        f"{base}/convert_docbin",
+        data=json.dumps({"items": items}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as err:
+        return err.code, json.loads(err.read() or b"{}")

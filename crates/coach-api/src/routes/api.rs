@@ -679,6 +679,12 @@ pub async fn put_data_item(
     let item = match existing {
         Some(prev) => {
             let mut item = prev.clone();
+            // Explicit-id updates carry the new label through; the
+            // legacy label-match path keeps the matched label (it was the
+            // match key).
+            if body.id.is_some() {
+                item.label = label;
+            }
             if let Some(notes) = body.notes.clone() {
                 item.notes = Some(notes);
             }
@@ -692,22 +698,25 @@ pub async fn put_data_item(
             state.storage.put_data_item(item.clone())?;
             let changed = item.status != prev.status
                 || item.split != prev.split
-                || item.notes != prev.notes;
+                || item.notes != prev.notes
+                || item.label != prev.label;
             if changed {
                 state.storage.append_item_history(DataItemHistory {
                     id: new_id(),
                     item_id: item.id.clone(),
                     timestamp: now(),
                     actor: if body.actor.is_empty() { "web".into() } else { body.actor },
-                    field: "status/split/notes".into(),
+                    field: "status/split/notes/label".into(),
                     // History keeps the previous values for audit.
                     old_value: serde_json::json!({
                         "status": prev.status,
                         "split": prev.split,
+                        "label": prev.label,
                     }),
                     new_value: serde_json::json!({
                         "status": item.status,
                         "split": item.split,
+                        "label": item.label,
                     }),
                 })?;
             }
@@ -1543,6 +1552,211 @@ fn truncate_text(text: &str, max: usize) -> String {
     }
     let cut: String = text.chars().take(max).collect();
     format!("{cut}…")
+}
+
+// ---------------------------------------------------------------------------
+// Training-data pipeline — stage 4: review support + schema validation
+// ---------------------------------------------------------------------------
+
+/// Schema check for a dataset (`GET /api/datasets/{id}/validation`): issues
+/// that would break a spaCy export or pollute training. ITEM_THRESHOLD keeps
+/// pathological datasets (one item, one label) detectable early.
+#[utoipa::path(
+    get,
+    path = "/api/datasets/{id}/validation",
+    params(("id" = String, Path)),
+    responses((status = 200, body = serde_json::Value))
+)]
+pub async fn dataset_validation(
+    State(state): State<AppState>,
+    AxumPath(dataset_id): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use coach_core::model::DataItemStatus;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let items = state.storage.list_data_items(&dataset_id, None)?;
+    let mut issues: Vec<serde_json::Value> = Vec::new();
+    let mut label_space: BTreeMap<String, usize> = BTreeMap::new();
+
+    for item in &items {
+        // 1) Empty text (cannot tokenize into a doc).
+        let text_ok = item
+            .input_fields
+            .text
+            .as_deref()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        if !text_ok && item.input_fields.subject.is_none() {
+            issues.push(json!({
+                "item_id": item.id,
+                "severity": "critical",
+                "rule": "empty-text",
+                "detail": "Item hat keinen Text — kann nicht zu einem Doc werden",
+            }));
+        }
+        // 2) Empty label.
+        if item.label.trim().is_empty() {
+            issues.push(json!({
+                "item_id": item.id,
+                "severity": "critical",
+                "rule": "empty-label",
+                "detail": "Item hat kein Label",
+            }));
+        }
+        // 3) Label not kebab-case (breaks the canonical label space).
+        if !item.label.is_empty()
+            && (item.label != item.label.to_lowercase()
+                || item.label.contains(' ')
+                || item.label != item.label.trim())
+        {
+            issues.push(json!({
+                "item_id": item.id,
+                "severity": "warning",
+                "rule": "label-normalization",
+                "detail": format!("Label \"{}\" ist nicht kebab-case", item.label),
+            }));
+        }
+        *label_space.entry(item.label.clone()).or_default() += 1;
+    }
+
+    // 4) Same text with different labels — ambiguous supervision.
+    let mut by_text: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for item in &items {
+        if let Some(text) = &item.input_fields.text {
+            by_text
+                .entry(text.trim().to_string())
+                .or_default()
+                .insert(item.label.clone());
+        }
+    }
+    for (text, labels) in by_text {
+        if labels.len() > 1 {
+            issues.push(json!({
+                "item_id": null,
+                "severity": "warning",
+                "rule": "conflicting-text",
+                "detail": format!("Text \"{}…\" trägt mehrere Labels: {}", truncate_text(&text, 60), IntoIterator::into_iter(labels).collect::<Vec<_>>().join(", ")),
+            }));
+        }
+    }
+
+    // 5) Single-label dataset (textcat needs >=2 classes).
+    if items.len() > 1 && label_space.len() < 2 {
+        issues.push(json!({
+            "item_id": null,
+            "severity": "warning",
+            "rule": "single-label",
+            "detail": "Nur ein Label im Datensatz — Textklassifikation braucht >=2 Klassen",
+        }));
+    }
+
+    let status_counts = |wanted: DataItemStatus| {
+        items.iter().filter(|i| i.status == wanted).count()
+    };
+    Ok(Json(json!({
+        "total_items": items.len(),
+        "exportable": status_counts(DataItemStatus::Approved) + status_counts(DataItemStatus::Curated),
+        "approved": status_counts(DataItemStatus::Approved),
+        "curated": status_counts(DataItemStatus::Curated),
+        "raw": status_counts(DataItemStatus::Raw),
+        "rejected": status_counts(DataItemStatus::Rejected),
+        "labels": label_space,
+        "blocking_issues": issues.iter().filter(|i| i["severity"] == "critical").count(),
+        "issues": issues,
+    })))
+}
+
+/// DocBin conversion of the export payload (`GET
+/// /api/datasets/{id}/export/docbin?split=train`): forwards the item records
+/// to the render worker (which owns the spaCy tokenization + serialization),
+/// returns the resulting `.spacy` binary. The worker therefore must be
+/// running (sidebar → Serve-ready render worker), same as for Visualize.
+#[utoipa::path(
+    get,
+    path = "/api/datasets/{id}/export/docbin",
+    params(("id" = String, Path)),
+    responses((status = 200, body = Vec<u8>))
+)]
+pub async fn export_docbin(
+    State(state): State<AppState>,
+    AxumPath(dataset_id): AxumPath<String>,
+) -> Result<axum::response::Response, ApiError> {
+    use coach_core::model::DataItemStatus;
+
+    // Worker must be up; we pick the first registered one (same convention
+    // as forward_to_worker for the visualize proxy).
+    let worker = state
+        .workers
+        .list()
+        .into_iter()
+        .find(|w| w.port != 0)
+        .ok_or(coach_core::CoreError::Conflict(
+            "no render worker registered — start one via Settings/Visualize first".into(),
+        ))?;
+    let worker_url = format!("http://127.0.0.1:{}", worker.port);
+    let items = state.storage.list_data_items(&dataset_id, None)?;
+    if items.is_empty() {
+        return Err(coach_core::CoreError::Conflict("dataset has no items".into()).into());
+    }
+
+    let records: Vec<serde_json::Value> = items
+        .iter()
+        .map(|i| {
+            json!({
+                "text": i.input_fields.text.clone().unwrap_or_default(),
+                "label": i.label,
+                "split": match i.status {
+                    DataItemStatus::Rejected => "rejected",
+                    _ => "train",
+                },
+            })
+        })
+        .collect();
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{worker_url}/convert_docbin"))
+        .json(&serde_json::json!({ "items": records }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| coach_core::CoreError::Conflict(format!("worker unreachable: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(coach_core::CoreError::Conflict(format!(
+            "worker {status}: {detail:.400}"
+        )).into());
+    }
+
+    let docbin_b64: serde_json::Value = response.json().await.map_err(|e| {
+        coach_core::CoreError::Conflict(format!("bad worker response: {e}"))
+    })?;
+    let payload_b64 = docbin_b64
+        .get("docbin_b64")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let bytes = base64_bytes(payload_b64).ok_or_else(|| {
+        coach_core::CoreError::Conflict("worker returned invalid base64".into())
+    })?;
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "application/octet-stream")
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"{dataset_id}.spacy\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| ApiError::from(coach_core::CoreError::Io(std::io::Error::other(e))))
+}
+
+/// Extract base64 bytes from a possibly data-url-prefixed string.
+fn base64_bytes(value: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let raw = value.rsplit(',').next().unwrap_or(value);
+    base64::engine::general_purpose::STANDARD.decode(raw).ok()
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import HelpBubble from "../components/HelpBubble";
+import ReviewDeck from "../components/ReviewDeck";
 
 type DataItem = {
   id: string;
@@ -77,6 +78,12 @@ export default function TrainingData() {
   const [annotationLabels, setAnnotationLabels] = useState("");
   const [annotationInstruction, setAnnotationInstruction] = useState("");
   const [busy, setBusy] = useState(false);
+  const [validation, setValidation] = useState<{
+    exportable?: number;
+    total_items?: number;
+    issues?: Array<{ rule: string; detail: string; severity: string }>;
+  } | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
 
   const refresh = useCallback(async () => {
     const list = (await (await fetch("/api/datasets")).json()) as Array<{
@@ -100,6 +107,16 @@ export default function TrainingData() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
   }, [refresh]);
+
+  // Validation report refreshes with the dataset switch.
+  useEffect(() => {
+    if (!active) return;
+    setValidation(null);
+    fetch(`/api/datasets/${active}/validation`)
+      .then((r) => r.json() as Promise<NonNullable<typeof validation>>)
+      .then(setValidation)
+      .catch(() => {});
+  }, [active, items]);
 
   // Sources + providers for the pipeline panels (loaded once per render of
   // the datasets list; the endpoints are cheap lists).
@@ -265,10 +282,92 @@ export default function TrainingData() {
     }
   };
 
+  const updateItem = async (
+    itemId: string,
+    patch: { status?: string; label?: string },
+  ) => {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+    const res = await fetch(`/api/datasets/${active}/items`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: item.text ?? "",
+        label: patch.label ?? item.label,
+        status: patch.status ?? item.status,
+        id: itemId,
+      }),
+    });
+    if (!res.ok) throw new Error(`update failed (${res.status})`);
+  };
+
   const labelCounts = items.reduce<Record<string, number>>((acc, item) => {
     acc[item.label] = (acc[item.label] ?? 0) + 1;
     return acc;
   }, {});
+
+  // Validation-badged review toolbar: Review start, issue summary, DocBin
+  // export (requires a running render worker).
+  function reviewsBelow() {
+    if (!validation) return null;
+    const blocking = (validation.issues ?? []).filter((i) => i.severity === "critical");
+    return (
+      <div className="card" style={{ margin: "12px 0" }}>
+        <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <b>
+            Review-Fortschritt <HelpBubble helpId="train-data.review" />
+          </b>
+          <span>
+            {validation.exportable ?? 0}/{validation.total_items ?? 0} exportfähig
+          </span>
+          <button
+            className="button button-primary"
+            onClick={() => setReviewMode((v) => !v)}
+            disabled={items.length === 0}
+          >
+            {reviewMode ? "Review beenden" : "Review starten"}
+          </button>
+          <a
+            className="button"
+            href={`/api/datasets/${active}/export/docbin`}
+            download
+            title=".spacy-DocBin (benötigt laufenden Render-Worker)"
+          >
+            Export .spacy <HelpBubble helpId="train-data.export" />
+          </a>
+        </div>
+        <div className="stat-label" style={{ marginTop: 6 }}>
+          {blocking.length === 0
+            ? "Keine kritischen Schema-Fehler."
+            : `${blocking.length} kritische Fehler: ${blocking
+                .slice(0, 3)
+                .map((i) => i.detail)
+                .join(" · ")}`}
+        </div>
+        {(validation.issues ?? []).length > 0 && (
+          <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+            {(validation.issues ?? []).slice(0, 5).map((issue, idx) => (
+              <li key={idx} className={`stat-label ${issue.severity === "critical" ? "" : "muted"}`}>
+                {issue.severity === "critical" ? "[blockiert]" : "[Warnung]"} {issue.rule}: {issue.detail}
+              </li>
+            ))}
+          </ul>
+        )}
+        {reviewMode && (
+          <ReviewDeck
+            items={items as never}
+            onClose={() => setReviewMode(false)}
+            onDecide={async (itemId, action) => {
+              await updateItem(itemId, { status: action });
+            }}
+            onEditLabel={async (itemId, label) => {
+              await updateItem(itemId, { label });
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -447,9 +546,10 @@ export default function TrainingData() {
             </span>
           </div>
 
+          {reviewsBelow()}
+
           {selected.size > 0 && (
-            <div className="card" style={{ margin: "12px 0" }}>
-              <h3 style={{ marginTop: 0 }}>
+            <div className="card" style={{ margin: "12px 0" }}>              <h3 style={{ marginTop: 0 }}>
                 Auswahl: {selected.size} Items <HelpBubble helpId="train-data.annotation" />
               </h3>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>

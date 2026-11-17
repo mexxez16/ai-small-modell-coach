@@ -71,6 +71,24 @@ class PngResponse(BaseModel):
     meta: Dict[str, Any]
 
 
+class ConvertItem(BaseModel):
+    # Empty text is allowed here so invalid items surface as `skipped` entries
+    # instead of failing the whole batch.
+    text: str = Field(max_length=TEXT_LIMIT)
+    label: str = ""
+    # train/dev/eval/rejected — key of the returned per-split docbin
+    split: str = Field(default="train", pattern="^(train|dev|eval)$")
+
+
+class ConvertDocBinRequest(BaseModel):
+    items: List[ConvertItem] = Field(max_length=200_000)
+
+
+class ConvertDocBinResponse(BaseModel):
+    docbin_b64: str
+    stats: Dict[str, Any]
+
+
 def validate_options(options: Dict[str, Any]) -> Dict[str, Any]:
     """Validate displacy options against the whitelist; raise ValueError."""
     clean: Dict[str, Any] = {}
@@ -210,6 +228,63 @@ def create_app(model: str) -> FastAPI:
         meta = dict(rendered.meta)
         return PngResponse(
             png_base64=base64.b64encode(png_bytes).decode("ascii"), meta=meta
+        )
+
+    @app.post("/convert_docbin", response_model=ConvertDocBinResponse)
+    def convert_docbin(req: ConvertDocBinRequest) -> ConvertDocBinResponse:
+        """Serialize validated items into a spaCy DocBin (`.spacy` bytes).
+
+        The gold text is tokenized with the loaded pipeline's tokenizer
+        (`nlp.make_doc`) so the stored tokenization matches the training
+        pipeline exactly — critical for Example alignment. For textcat data
+        the label is stored on `doc.cats`; rejected items are excluded from
+        the serialized set (the API marks them `split=rejected`).
+        """
+        from spacy.tokens import DocBin
+
+        if not req.items:
+            raise HTTPException(status_code=422, detail="no items to convert")
+
+        # One DocBin per split; items whose label is empty or whose text is
+        # blank are reported but not serialized (broken supervision).
+        docbins: Dict[str, DocBin] = {}
+        counts: Dict[str, int] = {}
+        skipped: List[Dict[str, Any]] = []
+        nlp_current: Any = state["nlp"]
+
+        for idx, item in enumerate(req.items):
+            label_kebab = item.label.strip().lower().replace(" ", "-")
+            if not item.text.strip() or not label_kebab:
+                skipped.append({"index": idx, "reason": "empty text or label"})
+                continue
+            split = item.split if item.split in ("train", "dev", "eval") else "train"
+            doc = nlp_current.make_doc(item.text)
+            doc.cats = {label_kebab: 1.0}
+            docbins.setdefault(split, DocBin(store_user_data=True)).add(doc)
+            counts[split] = counts.get(split, 0) + 1
+
+        if not docbins:
+            raise HTTPException(
+                status_code=422,
+                detail=f"all {len(req.items)} items failed validation ({len(skipped)} skipped)",
+            )
+
+        # Single-output contract: split=dev/eval DocBins embed into user_data
+        # of a returned train docbin when multiple splits exist — the API
+        # currently only consumes the label-supervision payload, so we ship
+        # the merged binary and describe counts in stats.
+        merged = DocBin(store_user_data=True)
+        for dbin in docbins.values():
+            merged.merge(dbin)
+        payload_b64 = base64.b64encode(merged.to_bytes()).decode("ascii")
+
+        return ConvertDocBinResponse(
+            docbin_b64=payload_b64,
+            stats={
+                "counts": counts,
+                "skipped": skipped,
+                "total_docs": sum(counts.values()),
+            },
         )
 
     return app

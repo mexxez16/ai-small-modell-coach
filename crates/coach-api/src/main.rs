@@ -85,6 +85,8 @@ use utoipa::OpenApi;
         routes::api::chunk_source,
         routes::api::annotate_items,
         routes::api::export_dataset,
+        routes::api::dataset_validation,
+        routes::api::export_docbin,
 
         routes::workers::spawn_worker,
 
@@ -258,6 +260,14 @@ fn build_router(state: AppState) -> Router {
         .route("/api/sources/{id}/chunks", post(routes::api::chunk_source))
         .route("/api/annotations", post(routes::api::annotate_items))
         .route("/api/datasets/{id}/export", get(routes::api::export_dataset))
+        .route(
+            "/api/datasets/{id}/validation",
+            get(routes::api::dataset_validation),
+        )
+        .route(
+            "/api/datasets/{id}/export/docbin",
+            get(routes::api::export_docbin),
+        )
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
 

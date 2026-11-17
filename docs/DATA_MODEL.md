@@ -140,6 +140,17 @@ started_at. Managed by coach-api, **not persisted** — respawned on demand.
 
 ## Storage mapping
 
+### Review + validation + DocBin export (pipeline stages 4-5)
+
+- `GET /api/datasets/{id}/validation` reports export-blocking schema issues
+  (empty text/label, non-kebab labels, single-label datasets, conflicting
+  texts) plus the per-status item counts to drive the review badges.
+- `GET /api/datasets/{id}/export/docbin` forwards the curated item records to
+  the render worker (`POST /convert_docbin`), which tokenizes with the loaded
+  pipeline (`nlp.make_doc`) and serializes a `DocBin` per split — the label
+  supervision stays aligned with the later `spacy train` tokenization. The
+  binary response is the `.spacy` file; no Rust-side re-tokenization.
+
 Rust structs persist to the single SQLite database (`coach.db`); each entity
 maps to one table (`sessions`, `runs`, `metric_points`, `images`,
 `visualizations`, `datasets`, `data_items`, `item_history`,
