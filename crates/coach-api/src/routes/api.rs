@@ -1763,8 +1763,9 @@ pub async fn dataset_validation(
 pub async fn export_docbin(
     State(state): State<AppState>,
     AxumPath(dataset_id): AxumPath<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<axum::response::Response, ApiError> {
-    use coach_core::model::DataItemStatus;
+    use coach_core::model::{DataItemStatus, DataSplit};
 
     // Worker must be up; we pick the first registered one (same convention
     // as forward_to_worker for the visualize proxy).
@@ -1777,6 +1778,14 @@ pub async fn export_docbin(
             "no render worker registered — start one via Settings/Visualize first".into(),
         ))?;
     let worker_url = format!("http://127.0.0.1:{}", worker.port);
+    // Optional split filter (?split=train|dev|eval) so training and dev
+    // DocBins can be downloaded separately — spaCy needs both files apart.
+    let wanted_split = params.get("split").map(|s| match s.as_str() {
+        "dev" => DataSplit::Dev,
+        "eval" => DataSplit::Eval,
+        _ => DataSplit::Train,
+    });
+
     let items = state.storage.list_data_items(&dataset_id, None)?;
     if items.is_empty() {
         return Err(coach_core::CoreError::Conflict("dataset has no items".into()).into());
@@ -1784,6 +1793,17 @@ pub async fn export_docbin(
 
     let records: Vec<serde_json::Value> = items
         .iter()
+        .filter(|i| {
+            wanted_split
+                .as_ref()
+                .map(|w| match i.split {
+                    DataSplit::Train => matches!(w, DataSplit::Train),
+                    DataSplit::Dev => matches!(w, DataSplit::Dev),
+                    DataSplit::Eval => matches!(w, DataSplit::Eval),
+                    DataSplit::Unassigned => matches!(w, DataSplit::Train),
+                })
+                .unwrap_or(true)
+        })
         .map(|i| {
             json!({
                 "text": i.input_fields.text.clone().unwrap_or_default(),
@@ -2193,4 +2213,76 @@ fn write_step_config_named(step: &str, name: &str, value: &serde_json::Value) ->
         .map_err(|e| coach_core::CoreError::Serialization(e))?;
     std::fs::write(dir.join(format!("{name}.json")), text)
         .map_err(|e| coach_core::CoreError::Io(e).into())
+}
+
+
+/// Generate a draft spaCy `config.cfg` (`GET /api/datasets/{id}/config-cfg`)
+/// for `spacy train`: textcat pipeline with the dataset's label vocabulary,
+/// lang de. Platform-agnostic draft — adjust after first run if needed.
+#[utoipa::path(get, path = "/api/datasets/{id}/config-cfg", responses((status = 200)))]
+pub async fn export_config_cfg(
+    State(state): State<AppState>,
+    AxumPath(dataset_id): AxumPath<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let dataset = state.storage.get_dataset(&dataset_id)?;
+    let items = state.storage.list_data_items(&dataset_id, None)?;
+    let mut labels: Vec<String> = items.iter().map(|i| i.label.clone()).collect();
+    labels.sort();
+    labels.dedup();
+    let labels_str = labels.join(", ");
+
+    let cfg = format!(
+        r#"# Generated draft config for dataset "{name}" ({lang})
+# Labels detected: {labels}
+# Usage: spacy train config.cfg --output training/ --paths.train train.spacy --paths.dev dev.spacy
+[paths]
+train = "train.spacy"
+dev = "dev.spacy"
+
+[system]
+gpu_allocator = null
+
+[nlp]
+lang = "{lang}"
+pipeline = ["textcat"]
+batch_size = 1000
+
+[nlp.tokenizer]
+@tokenizers = "spacy.Tokenizer.v1"
+
+[components]
+
+[components.textcat]
+factory = "textcat"
+
+[components.textcat.model]
+@architectures = "spacy.TextCatBOW.v2"
+exclusive_classes = true
+ngram_size = 1
+no_shared_table = false
+
+[training]
+train_batch_size = 64
+dev_batch_size = 64
+patience = 1600
+max_epochs = 0
+dropout = 0.1
+
+[training.logger]
+@loggers = "spacy.ConsoleLogger.v1"
+"#,
+        name = dataset.name,
+        lang = "de",
+        labels = labels_str,
+    );
+
+    Ok(axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "text/plain; charset=utf-8")
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"config-cfg-{}.txt\"", dataset.name),
+        )
+        .body(axum::body::Body::from(cfg))
+        .map_err(|e| coach_core::CoreError::Serialization(serde_json::Error::io(std::io::Error::other(e))))?)
 }

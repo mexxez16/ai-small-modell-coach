@@ -1263,6 +1263,37 @@ export default function DataRuns() {
                   "wird bei der ersten Ausführung erzeugt"
                 )}
               </p>
+              {detail.dataset_id && (
+                <table className="table" style={{ marginBottom: 10 }}>
+                  <thead>
+                    <tr>
+                      <th>spaCy-Trainingsdateien</th>
+                      <th style={{ width: 240 }}>Aktionen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>config.cfg <span className="stat-label">(Draft: textcat, labels aus Dataset, lang=de)</span></td>
+                      <td className="field-row" style={{ gap: 6 }}>
+                        <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} target="_blank" rel="noreferrer">Öffnen</a>
+                        <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} download="config.cfg">Download</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>train.spacy <span className="stat-label">(nur train-Split — DocBin, braucht Render-Worker)</span></td>
+                      <td className="field-row" style={{ gap: 6 }}>
+                        <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=train`} download="train.spacy">Download</a>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>dev.spacy <span className="stat-label">(nur dev-Split — DocBin, braucht Render-Worker)</span></td>
+                      <td className="field-row" style={{ gap: 6 }}>
+                        <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=dev`} download="dev.spacy">Download</a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
               {(() => {
                 // Collect per-head artifacts from every export stage result.
                 const heads: Array<{ head: string; rows: number; file: string }> = [];
