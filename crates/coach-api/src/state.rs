@@ -38,10 +38,17 @@ impl AppConfig {
             .ok()
             .and_then(|p| p.parse().ok());
         let token = std::env::var("COACH_TOKEN").ok().filter(|t| !t.is_empty());
+        // Frontend bundle: explicit COACH_WEB_DIST wins, else default to the
+        // repo-relative `apps/web/dist` when it exists (so a plain binary
+        // start serves the built UI without extra env setup).
         let web_dist = std::env::var("COACH_WEB_DIST")
             .ok()
             .map(std::path::PathBuf::from)
-            .filter(|p| p.is_dir());
+            .filter(|p| p.is_dir())
+            .or_else(|| {
+                let default = std::path::PathBuf::from("apps/web/dist");
+                default.is_dir().then_some(default)
+            });
         AppConfig {
             port,
             token,
