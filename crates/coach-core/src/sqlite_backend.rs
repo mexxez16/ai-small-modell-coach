@@ -9,14 +9,14 @@
 use crate::error::{CoreError, Result};
 use crate::model::{
     ConversionJob, DataItem, DataItemHistory, DataItemStatus, Dataset, Image, MetricPoint, Run,
-    Scope, Session, Visualization,
+    Scope, Session, SourceDoc, Visualization,
 };
 use crate::storage::Storage;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -130,6 +130,15 @@ CREATE TABLE IF NOT EXISTS scopes (
     query TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS source_docs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text',
+    size INTEGER NOT NULL DEFAULT 0,
+    sha256 TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 "#;
 
 /// SQLite-backed [`Storage`] implementation. The connection sits behind a
@@ -218,6 +227,7 @@ const HISTORY_COLS: &str = "id, item_id, timestamp, actor, field, old_value, new
 const JOB_COLS: &str =
     "id, dataset_id, pipeline, params, status, artifacts, stats, created_at, updated_at";
 const SCOPE_COLS: &str = "id, name, query, created_at";
+const SOURCE_COLS: &str = "id, name, kind, size, sha256, content, created_at";
 
 fn scope_from_row(row: &rusqlite::Row) -> Result<Scope> {
     Ok(Scope {
@@ -357,6 +367,18 @@ fn job_from_row(row: &rusqlite::Row) -> Result<ConversionJob> {
         stats: json_col(row.get(6)?)?,
         created_at: str_to_ts(row.get(7)?)?,
         updated_at: str_to_ts(row.get(8)?)?,
+    })
+}
+
+fn source_doc_from_row(row: &rusqlite::Row) -> Result<SourceDoc> {
+    Ok(SourceDoc {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind: row.get(2)?,
+        size: row.get(3)?,
+        sha256: row.get(4)?,
+        content: row.get(5)?,
+        created_at: str_to_ts(row.get(6)?)?,
     })
 }
 
@@ -1091,6 +1113,58 @@ impl Storage for SqliteStore {
         let affected = conn.execute("DELETE FROM scopes WHERE id = ?1", params![id])?;
         if affected == 0 {
             return Err(CoreError::NotFound(format!("scope {id}")));
+        }
+        Ok(())
+    }
+
+    // --- Source documents ---
+
+    fn put_source_doc(&self, doc: SourceDoc) -> Result<SourceDoc> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO source_docs (id, name, kind, size, sha256, content, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET name=?2, kind=?3, sha256=?4, content=?5",
+            params![
+                doc.id,
+                doc.name,
+                doc.kind,
+                doc.size,
+                doc.sha256,
+                doc.content,
+                ts_to_str(&doc.created_at)
+            ],
+        )?;
+        Ok(doc)
+    }
+
+    fn get_source_doc(&self, id: &str) -> Result<SourceDoc> {
+        let conn = self.lock()?;
+        conn.query_row(
+            &format!("SELECT {SOURCE_COLS} FROM source_docs WHERE id = ?1"),
+            params![id],
+            wrap(source_doc_from_row),
+        )
+        .optional()?
+        .ok_or_else(|| CoreError::NotFound(format!("source doc {id}")))
+    }
+
+    fn list_source_docs(&self) -> Result<Vec<SourceDoc>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SOURCE_COLS} FROM source_docs ORDER BY created_at DESC"
+        ))?;
+        let rows = stmt
+            .query_map([], wrap(source_doc_from_row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_source_doc(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        let affected = conn.execute("DELETE FROM source_docs WHERE id = ?1", params![id])?;
+        if affected == 0 {
+            return Err(CoreError::NotFound(format!("source doc {id}")));
         }
         Ok(())
     }

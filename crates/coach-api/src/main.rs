@@ -78,6 +78,14 @@ use utoipa::OpenApi;
         routes::api::create_scope,
         routes::api::delete_scope,
 
+        routes::api::create_source,
+        routes::api::list_sources,
+        routes::api::get_source,
+        routes::api::delete_source,
+        routes::api::chunk_source,
+        routes::api::annotate_items,
+        routes::api::export_dataset,
+
         routes::workers::spawn_worker,
 
         routes::workers::list_workers,
@@ -238,6 +246,18 @@ fn build_router(state: AppState) -> Router {
             get(routes::api::list_conversions).post(routes::api::create_conversion),
         )
         .route("/api/runs/{id}/assign", post(routes::api::assign_run))
+
+        .route(
+            "/api/sources",
+            get(routes::api::list_sources).post(routes::api::create_source),
+        )
+        .route(
+            "/api/sources/{id}",
+            get(routes::api::get_source).delete(routes::api::delete_source),
+        )
+        .route("/api/sources/{id}/chunks", post(routes::api::chunk_source))
+        .route("/api/annotations", post(routes::api::annotate_items))
+        .route("/api/datasets/{id}/export", get(routes::api::export_dataset))
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
 

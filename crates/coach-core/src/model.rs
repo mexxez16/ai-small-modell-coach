@@ -282,6 +282,21 @@ pub struct ConversionJob {
     pub updated_at: DateTime<Utc>,
 }
 
+/// An uploaded source document awaiting chunking into data items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct SourceDoc {
+    pub id: String,
+    pub name: String,
+    /// e.g. "text" | "json" | "markdown" (kept free-form).
+    pub kind: String,
+    pub size: i64,
+    /// sha256 hex of the raw content (dedup/audit).
+    pub sha256: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
 /// A saved AimQL query ("scope") — a named, shareable Runs-dashboard filter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

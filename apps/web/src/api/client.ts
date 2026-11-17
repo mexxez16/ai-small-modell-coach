@@ -84,6 +84,45 @@ export type Visualization = {
 
 export type Health = { status: string; version: string };
 
+export type SourceDoc = {
+  id: string;
+  name: string;
+  kind: string;
+  size: number;
+  sha256: string;
+  content: string;
+  created_at: string;
+};
+
+export type ChunkResponse = {
+  dataset_id: string;
+  created_items: number;
+  skipped_existing: number;
+};
+
+export type AnnotateResponse = {
+  annotated: number;
+  failed: number;
+  errors: string[];
+};
+
+export type DataItem = {
+  id: string;
+  dataset_id: string;
+  text?: string | null;
+  subject?: string | null;
+  predicate?: string | null;
+  object?: string | null;
+  label: string;
+  kind: string;
+  source: string;
+  status: string;
+  split: string;
+  assignee?: string | null;
+  notes?: string | null;
+  updated_at: string;
+};
+
 export type DashboardData = {
   counts: {
     sessions: number;
@@ -192,4 +231,24 @@ export const api = {
     options?: Record<string, unknown>;
     svg: string;
   }) => request<Visualization>("POST", "/api/visualizations", payload),
+  listSources: () => request<SourceDoc[]>("GET", "/api/sources"),
+  createSource: (name: string, content: string) =>
+    request<{ id: string; name: string }>("POST", "/api/sources", { name, content }),
+  deleteSource: (id: string) => request<void>("DELETE", `/api/sources/${id}`),
+  chunkSource: (
+    sourceId: string,
+    payload: {
+      strategy: string;
+      max_chars?: number;
+      overlap?: number;
+      dataset_id?: string;
+      label?: string;
+    },
+  ) => request<ChunkResponse>("POST", `/api/sources/${sourceId}/chunks`, payload),
+  annotate: (payload: {
+    provider_id: string;
+    item_ids: string[];
+    instruction?: string;
+    labels?: string[];
+  }) => request<AnnotateResponse>("POST", "/api/annotations", payload),
 };

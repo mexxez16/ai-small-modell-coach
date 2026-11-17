@@ -625,7 +625,6 @@ pub async fn list_datasets(State(state): State<AppState>) -> Result<Json<Vec<Dat
 
 #[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 pub struct PutItem {
-    /// Text payload of the item.
     pub text: String,
     /// Canonical kebab-case label; validated server-side.
     pub label: String,
@@ -636,6 +635,10 @@ pub struct PutItem {
     pub notes: Option<String>,
     #[serde(default)]
     pub actor: String,
+    /// Explicit item id: when present and resolvable, the update targets this
+    /// exact item instead of the first label match.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// Create or update a data item, writing an audit-history entry when an
@@ -655,11 +658,20 @@ pub async fn put_data_item(
     let label = body.label.trim().to_lowercase().replace(' ', "-");
     let item_id = new_id();
     let match_id = item_id.clone();
-    let existing = state
-        .storage
-        .list_data_items(&dataset_id, None)?
-        .into_iter()
-        .find(|i| i.label == label);
+    // Target resolution: an explicit id wins (bulk operations use it); only
+    // new item creation falls back to the first-label-match legacy rule.
+    let existing = match body.id.as_deref() {
+        Some(explicit_id) => state
+            .storage
+            .list_data_items(&dataset_id, None)?
+            .into_iter()
+            .find(|i| &i.id == explicit_id),
+        None => state
+            .storage
+            .list_data_items(&dataset_id, None)?
+            .into_iter()
+            .find(|i| i.label == label),
+    };
 
     let kind = body.kind.unwrap_or(coach_core::model::DataItemKind::Example);
     let status = body.status.unwrap_or(coach_core::model::DataItemStatus::Raw);
@@ -999,4 +1011,613 @@ pub async fn delete_scope(
 pub struct ScopeIn {
     pub name: String,
     pub query: String,
+}
+
+// ---------------------------------------------------------------------------
+// Training-data pipeline — stage 1: sources + stage 2: chunking
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct CreateSource {
+    pub name: String,
+    /// Raw document content.
+    pub content: String,
+    /// e.g. "text" | "markdown" | "json".
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// Store an uploaded source document (`POST /api/sources`). The sha256 serves
+/// as provenance and de-duplication hint; content is kept in the store so
+/// chunking is reproducible.
+#[utoipa::path(post, path = "/api/sources", request_body = CreateSource, responses((status = 200, body = coach_core::model::SourceDoc)))]
+pub async fn create_source(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSource>,
+) -> Result<Json<coach_core::model::SourceDoc>, ApiError> {
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(coach_core::CoreError::InvalidQuery("source name is required".into()).into());
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(body.content.as_bytes());
+    let doc = coach_core::model::SourceDoc {
+        id: new_id(),
+        name: name.to_string(),
+        kind: body.kind.unwrap_or_else(|| "text".into()),
+        size: body.content.len() as i64,
+        sha256: hex::encode(hasher.finalize()),
+        content: body.content,
+        created_at: now(),
+    };
+    Ok(Json(state.storage.put_source_doc(doc)?))
+}
+
+/// List uploaded source documents (`GET /api/sources`).
+#[utoipa::path(get, path = "/api/sources", responses((status = 200, body = [coach_core::model::SourceDoc])))]
+pub async fn list_sources(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<coach_core::model::SourceDoc>>, ApiError> {
+    Ok(Json(state.storage.list_source_docs()?))
+}
+
+/// Delete a source document (`DELETE /api/sources/{id}`). Chunked items are
+/// kept (their provenance string survives the deletion).
+#[utoipa::path(delete, path = "/api/sources/{id}", responses((status = 200)))]
+pub async fn delete_source(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    state.storage.delete_source_doc(&id)?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct ChunkRequest {
+    /// "paragraph" (default) | "sentence" | "window".
+    #[serde(default)]
+    pub strategy: Option<String>,
+    /// Approximate max characters per chunk (window/soft cap for all modes).
+    #[serde(default)]
+    pub max_chars: Option<usize>,
+    /// Overlap in characters between windows.
+    #[serde(default)]
+    pub overlap: Option<usize>,
+    /// Target dataset; when empty a dataset named `imported-<date>` is
+    /// created/looked up.
+    #[serde(default)]
+    pub dataset_id: Option<String>,
+    /// Default kebab-case label applied to all produced items.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct ChunkResponse {
+    pub dataset_id: String,
+    pub created_items: usize,
+    pub skipped_existing: usize,
+}
+
+/// Split a source document into sentence-ish chunks.
+fn chunk_text(content: &str, strategy: &str, max_chars: usize, overlap: usize) -> Vec<String> {
+    fn push_chunk(out: &mut Vec<String>, buf: String) {
+        let trimmed = buf.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+    }
+    let mut chunks: Vec<String> = Vec::new();
+    match strategy {        "sentence" => {
+            // Split at ., !, ? boundaries followed by whitespace/EOL.
+            let mut buf = String::new();
+            let mut chars = content.chars().peekable();
+            while let Some(c) = chars.next() {
+                buf.push(c);
+                if matches!(c, '.' | '!' | '?') {
+                    // Only split when whitespace follows (not "3.5" etc.).
+                    let next_is_ws = chars.peek().map(|n| n.is_whitespace()).unwrap_or(true);
+                    if next_is_ws {
+                        push_chunk(&mut chunks, std::mem::take(&mut buf));
+                    }
+                }
+            }
+            push_chunk(&mut chunks, buf);
+            // Merge micro-chunks up to max_chars (without overlap).
+            let mut merged: Vec<String> = Vec::new();
+            let mut carry = String::new();
+            for chunk in chunks {
+                if carry.chars().count() + chunk.chars().count() + 1 <= max_chars {
+                    if carry.is_empty() {
+                        carry = chunk;
+                    } else {
+                        carry.push(' ');
+                        carry.push_str(&chunk);
+                    }
+                } else {
+                    push_chunk(&mut merged, std::mem::take(&mut carry));
+                    if chunk.chars().count() <= max_chars {
+                        carry = chunk;
+                    } else {
+                        // Hard-window oversized sentences.
+                        let windowed = window_text(&chunk, max_chars, 0);
+                        for w in windowed.iter().take(windowed.len() - 1) {
+                            push_chunk(&mut merged, w.clone());
+                        }
+                        if let Some(last) = windowed.last() {
+                            carry = last.clone();
+                        }
+                    }
+                }
+            }
+            push_chunk(&mut merged, carry);
+            merged
+        }
+        "window" => window_text(content, max_chars, overlap),
+        // Default: paragraph mode with a max_chars soft cap.
+        _ => {
+            let mut out = Vec::new();
+            for para in content.split("\n\n") {
+                let para = para.trim();
+                if para.is_empty() {
+                    continue;
+                }
+                if para.chars().count() <= max_chars {
+                    push_chunk(&mut out, para.to_string());
+                } else {
+                    for w in window_text(para, max_chars, overlap) {
+                        push_chunk(&mut out, w);
+                    }
+                }
+            }
+            out
+        }
+    }
+}
+
+/// Fixed-size character windows with overlap.
+fn window_text(content: &str, max_chars: usize, overlap: usize) -> Vec<String> {    let max = max_chars.max(1);
+    let overlap = overlap.min(max.saturating_sub(1));
+    let chars: Vec<char> = content.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let end = (start + max).min(chars.len());
+        let slice: String = chars[start..end].iter().collect();
+        let trimmed = slice.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+        if end >= chars.len() {
+            break;
+        }
+        start += max - overlap;
+    }
+    out
+}
+
+/// Chunk a source document into raw DataItems (`POST /api/sources/{id}/chunks`).
+/// Every item carries provenance `"<source_name>#<index>"` so the audit trail
+/// stays traceable back to the upload.
+#[utoipa::path(post, path = "/api/sources/{id}/chunks", request_body = ChunkRequest, responses((status = 200, body = ChunkResponse)))]
+pub async fn chunk_source(
+    State(state): State<AppState>,
+    AxumPath(source_id): AxumPath<String>,
+    Json(body): Json<ChunkRequest>,
+) -> Result<Json<ChunkResponse>, ApiError> {
+    use coach_core::model::{DataItemKind, DataItemStatus, DataSplit};
+
+    let doc = state.storage.get_source_doc(&source_id)?;
+    let strategy = body.strategy.unwrap_or_else(|| "paragraph".into());
+    let max_chars = body.max_chars.unwrap_or(600).clamp(40, 20_000);
+    let overlap = body.overlap.unwrap_or(0).min(max_chars / 2);
+    let label = body
+        .label
+        .unwrap_or_else(|| "imported-chunk".into())
+        .trim()
+        .to_lowercase()
+        .replace(' ', "-");
+
+    // Resolve or create the target dataset.
+    let dataset_id = match body.dataset_id {
+        Some(id) if !id.is_empty() => {
+            state.storage.get_dataset(&id)?;
+            id
+        }
+        _ => {
+            let name = format!("imported-{}", doc.name.replace(' ', "-").to_lowercase());
+            let existing = state
+                .storage
+                .list_datasets()?
+                .into_iter()
+                .find(|d| d.name == name);
+            match existing {
+                Some(d) => d.id,
+                None => state
+                    .storage
+                    .create_dataset(Dataset {
+                        id: new_id(),
+                        name,
+                        source_ref: format!("source-doc:{}#sha256:{}", source_id, doc.sha256),
+                        schema_version: 1,
+                        created_at: now(),
+                        updated_at: now(),
+                        versions: vec![],
+                    })?
+                    .id,
+            }
+        }
+    };
+
+    let chunks = chunk_text(&doc.content, &strategy, max_chars, overlap);
+    // Existing items of the dataset (dedup on identical text).
+    let existing_texts: std::collections::HashSet<String> = state
+        .storage
+        .list_data_items(&dataset_id, None)?
+        .into_iter()
+        .filter_map(|i| i.input_fields.text)
+        .collect();
+
+    let mut created = 0usize;
+    let mut skipped = 0usize;
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        if existing_texts.contains(&chunk) {
+            skipped += 1;
+            continue;
+        }
+        let item = DataItem {
+            id: new_id(),
+            dataset_id: dataset_id.clone(),
+            input_fields: InputFields {
+                text: Some(chunk),
+                subject: None,
+                predicate: None,
+                object: None,
+            },
+            label: label.clone(),
+            kind: DataItemKind::Example,
+            source: format!("{}#{}", doc.name, idx),
+            status: DataItemStatus::Raw,
+            split: DataSplit::Unassigned,
+            assignee: None,
+            notes: None,
+            updated_at: now(),
+        };
+        state.storage.put_data_item(item)?;
+        created += 1;
+    }
+
+    Ok(Json(ChunkResponse {
+        dataset_id,
+        created_items: created,
+        skipped_existing: skipped,
+    }))
+}
+
+/// Read one source document back (`GET /api/sources/{id}`) — full content for
+/// the preview panel.
+#[utoipa::path(get, path = "/api/sources/{id}", responses((status = 200, body = coach_core::model::SourceDoc)))]
+pub async fn get_source(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<coach_core::model::SourceDoc>, ApiError> {
+    Ok(Json(state.storage.get_source_doc(&id)?))
+}
+
+// ---------------------------------------------------------------------------
+// Training-data pipeline — stage 3: AI annotation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct AnnotateRequest {
+    pub provider_id: String,
+    /// Data items (by id) to annotate.
+    pub item_ids: Vec<String>,
+    /// Free-form annotation instruction (task description).
+    #[serde(default)]
+    pub instruction: String,
+    /// Allowed labels; when empty, labels are inferred from the dataset.
+    #[serde(default)]
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct AnnotateResponse {
+    pub annotated: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Extract the first JSON object from a model response (models often wrap
+/// JSON in prose or code fences).
+fn extract_json(text: &str) -> Option<Value> {
+    let cleaned = text.trim();
+    let stripped = cleaned
+        .strip_prefix("```json")
+        .or_else(|| cleaned.strip_prefix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(cleaned);
+    let stripped = stripped.strip_suffix("```").map(|s| s.trim()).unwrap_or(stripped);
+    let start = stripped.find('{')?;
+    let end = stripped.rfind('}')?;
+    if start < end {
+        serde_json::from_str(&stripped[start..=end]).ok()
+    } else {
+        None
+    }
+}
+
+/// Classify the text of data items with an OpenAI-compatible provider
+/// (`POST /api/annotations`). Every result is written as a draft annotation:
+/// the label update is kept in the audit trail with actor `ai:<provider>`,
+/// items NEVER jump straight to approved. Returns per-item stats; failed
+/// items stay untouched.
+#[utoipa::path(post, path = "/api/annotations", request_body = AnnotateRequest, responses((status = 200, body = AnnotateResponse)))]
+pub async fn annotate_items(
+    State(state): State<AppState>,
+    Json(body): Json<AnnotateRequest>,
+) -> Result<Json<AnnotateResponse>, ApiError> {
+    use coach_core::model::{DataItemHistory, DataItemStatus};
+
+    let provider = state.provider_store.get(&body.provider_id).ok_or_else(|| {
+        coach_core::CoreError::InvalidQuery(format!("unknown provider {}", body.provider_id))
+    })?;
+    let base = provider
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "https://api.mistral.ai/v1".into());
+    let model = provider.model.clone().unwrap_or_else(|| "mistral-small-latest".into());
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+
+    let mut annotated = 0usize;
+    let mut failed = 0usize;
+    let mut errors = Vec::new();
+
+    for item_id in body.item_ids.iter() {
+        // Find the item across datasets (small scale; curation workbench).
+        let datasets = match state.storage.list_datasets() {
+            Ok(d) => d,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("storage: {e}"));
+                continue;
+            }
+        };
+        let mut found: Option<DataItem> = None;
+        for d in datasets {
+            if let Ok(items) = state.storage.list_data_items(&d.id, None) {
+                if let Some(item) = items.into_iter().find(|i| &i.id == item_id) {
+                    found = Some(item);
+                    break;
+                }
+            }
+        }
+        let Some(item) = found else {
+            failed += 1;
+            errors.push(format!("item {item_id} not found"));
+            continue;
+        };
+        let Some(text) = item.input_fields.text.clone() else {
+            failed += 1;
+            errors.push(format!("item {item_id} has no text"));
+            continue;
+        };
+
+        let label_list = if body.labels.is_empty() {
+            // Infer the label space from the dataset (all distinct labels).
+            let mut labels: Vec<String> = state
+                .storage
+                .list_data_items(&item.dataset_id, None)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|i| i.label)
+                .collect();
+            labels.sort();
+            labels.dedup();
+            labels
+        } else {
+            body.labels.clone()
+        };
+        if label_list.is_empty() {
+            failed += 1;
+            errors.push(format!(
+                "item {item_id}: no labels known and none supplied"
+            ));
+            continue;
+        }
+
+        let instruction = if body.instruction.trim().is_empty() {
+            "Classify each text into exactly one of the given labels.".to_string()
+        } else {
+            body.instruction.trim().to_string()
+        };
+        let prompt = format!(
+            "{instruction}\n\nAllowed labels (choose exactly one, output as JSON):\n{}\n\nText:\n{}\n\nRespond with ONLY a JSON object: {{\"label\": \"<one label>\", \"reasoning\": \"one short sentence\"}}",
+            label_list.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n"),
+            truncate_text(&text, 4000),
+        );
+
+        let payload = json!({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+        });
+        let mut req = state.http_client.post(&url).json(&payload);
+        if let Some(key) = provider.api_key.as_deref() {
+            if !key.is_empty() && !key.ends_with('…') {
+                req = req.bearer_auth(key);
+            }
+        }
+        let response = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("item {item_id}: provider unreachable: {e}"));
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            let status = response.status();
+            let detail = response.text().await.unwrap_or_default();
+            failed += 1;
+            errors.push(format!(
+                "item {item_id}: provider {status}: {}",
+                truncate_text(&detail, 200)
+            ));
+            continue;
+        }
+        let completion: Value = match response.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("item {item_id}: bad provider response: {e}"));
+                continue;
+            }
+        };
+        let content = completion["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        let Some(parsed) = extract_json(&content) else {
+            failed += 1;
+            errors.push(format!(
+                "item {item_id}: no JSON in model output: {}",
+                truncate_text(&content, 120)
+            ));
+            continue;
+        };
+        let new_label = parsed
+            .get("label")
+            .and_then(|l| l.as_str())
+            .map(|s| s.trim().to_lowercase().replace(' ', "-"))
+            .unwrap_or_default();
+        if !label_list.contains(&new_label) {
+            failed += 1;
+            errors.push(format!(
+                "item {item_id}: model label \"{new_label}\" not in allowed labels"
+            ));
+            continue;
+        }
+        let reasoning = parsed
+            .get("reasoning")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut updated = item.clone();
+        let old_label = updated.label.clone();
+        if updated.label != new_label || !reasoning.is_empty() {
+            updated.label = new_label.clone();
+            updated.notes = Some(if reasoning.is_empty() {
+                format!("ai-annotated via provider {}", provider.name)
+            } else {
+                format!("ai-annotated via provider {}: {}", provider.name, reasoning)
+            });
+            updated.status = DataItemStatus::Raw; // draft: stays raw until review
+            updated.updated_at = now();
+            let actor = format!("ai:{}", provider.name);
+            state.storage.put_data_item(updated.clone())?;
+            state.storage.append_item_history(DataItemHistory {
+                id: new_id(),
+                item_id: updated.id.clone(),
+                timestamp: now(),
+                actor: actor.clone(),
+                field: "label".into(),
+                old_value: serde_json::to_value(old_label).unwrap_or(Value::Null),
+                new_value: serde_json::to_value(new_label).unwrap_or(Value::Null),
+            })?;
+        }
+        annotated += 1;
+    }
+
+    Ok(Json(AnnotateResponse {
+        annotated,
+        failed,
+        errors,
+    }))
+}
+
+fn truncate_text(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!("{cut}…")
+}
+
+// ---------------------------------------------------------------------------
+// Training-data pipeline — stage 5: export
+// ---------------------------------------------------------------------------
+
+/// Export a dataset as spaCy-ready JSONL
+/// (`GET /api/datasets/{id}/export?status=approved`): one line per item,
+/// `{"text": ..., "label": ...}` — the format `spacy convert` and our
+/// coach_spacy worker accept for DocBin conversion.
+#[utoipa::path(
+    get,
+    path = "/api/datasets/{id}/export",
+    params(("id" = String, Path), ("status" = Option<String>, Query)),
+    responses((status = 200))
+)]
+pub async fn export_dataset(
+    State(state): State<AppState>,
+    AxumPath(dataset_id): AxumPath<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<axum::response::Response, ApiError> {
+    use coach_core::model::DataItemStatus;
+
+    let wanted_status = params.get("status").map(String::as_str);
+    let items: Vec<DataItem> = state
+        .storage
+        .list_data_items(&dataset_id, None)?
+        .into_iter()
+        .filter(|i| {
+            wanted_status.is_none()
+                || format!("{:?}", i.status).to_lowercase() == wanted_status.unwrap()
+        })
+        .collect();
+    let dataset = state.storage.get_dataset(&dataset_id)?;
+
+    let mut lines = Vec::new();
+    // Only approved items carry labels into the export: anything else is a
+    // draft the reviewer never confirmed. When everything is raw (draft-only
+    // dataset), export with labels anyway but flag it via a header comment.
+    let mut exported_unapproved = 0usize;
+    for item in &items {
+        if item.status != DataItemStatus::Approved
+            && item.status != DataItemStatus::Curated
+        {
+            exported_unapproved += 1;
+        }
+    }
+    for item in &items {
+        let line = json!({
+            "text": item.input_fields.text.clone().unwrap_or_default(),
+            "label": item.label,
+            "type": "textcat",
+            "meta": {
+                "item_id": item.id,
+                "source": item.source,
+                "status": format!("{:?}", item.status).to_lowercase(),
+            }
+        });
+        lines.push(line.to_string());
+    }
+    let body = lines.join("\n");
+    if exported_unapproved > 0 {
+        tracing::info!(
+            dataset = %dataset.name,
+            unapproved = exported_unapproved,
+            "export contains non-approved items"
+        );
+    }
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "application/x-ndjson")
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"{}.jsonl\"", dataset.name),
+        )
+        .body(axum::body::Body::from(body))
+        .map_err(|e| ApiError::from(coach_core::CoreError::Io(std::io::Error::other(e))))
 }

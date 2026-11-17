@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import HelpBubble from "../components/HelpBubble";
 
 type DataItem = {
   id: string;
@@ -40,6 +41,15 @@ type HistoryEntry = {
 const STATUSES = ["raw", "curated", "approved", "rejected"];
 const SPLITS = ["unassigned", "train", "dev", "eval"];
 
+type SourceDoc = {
+  id: string;
+  name: string;
+  kind: string;
+  size: number;
+  sha256: string;
+  created_at: string;
+};
+
 export default function TrainingData() {
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
   const [active, setActive] = useState<string>("");
@@ -51,6 +61,22 @@ export default function TrainingData() {
   const [devRatio, setDevRatio] = useState("0.2");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Pipeline state: sources, up/upload, chunk settings, annotation.
+  const [sources, setSources] = useState<SourceDoc[]>([]);
+  const [sourceName, setSourceName] = useState("");
+  const [sourceContent, setSourceContent] = useState("");
+  const [chunkStrategy, setChunkStrategy] = useState("paragraph");
+  const [chunkMaxChars, setChunkMaxChars] = useState("600");
+  const [chunkOverlap, setChunkOverlap] = useState("0");
+  const [chunkLabel, setChunkLabel] = useState("imported-chunk");
+  const [providers, setProviders] = useState<
+    Array<{ id: string; name: string; kind: string }>
+  >([]);
+  const [providerId, setProviderId] = useState("");
+  const [annotationLabels, setAnnotationLabels] = useState("");
+  const [annotationInstruction, setAnnotationInstruction] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     const list = (await (await fetch("/api/datasets")).json()) as Array<{
@@ -74,6 +100,19 @@ export default function TrainingData() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
   }, [refresh]);
+
+  // Sources + providers for the pipeline panels (loaded once per render of
+  // the datasets list; the endpoints are cheap lists).
+  useEffect(() => {
+    fetch("/api/sources")
+      .then((r) => r.json() as Promise<SourceDoc[]>)
+      .then(setSources)
+      .catch(() => {});
+    fetch("/api/settings/providers")
+      .then((r) => r.json() as Promise<{ providers?: Array<{ id: string; name: string; kind: string }> }>)
+      .then((d) => setProviders(d.providers ?? []))
+      .catch(() => {});
+  }, []);
 
   const bulkApply = async (patch: { status?: string; split?: string }) => {
     if (selected.size === 0) return;
@@ -146,6 +185,86 @@ export default function TrainingData() {
     });
   };
 
+  const uploadSource = async () => {
+    if (!sourceContent.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: sourceName || `source-${Date.now()}`, content: sourceContent }),
+      });
+      if (!res.ok) throw new Error(`upload failed (${res.status})`);
+      const doc = (await res.json()) as SourceDoc;
+      setSources((prev) => [doc as never, ...prev]);
+      setSourceName("");
+      setSourceContent("");
+      setNotice("Quelle gespeichert — jetzt chunking konfigurieren.");
+    } catch (err) {
+      setError(`Upload fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chunkSource = async (docId: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/sources/${encodeURIComponent(docId)}/chunks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy: chunkStrategy,
+          max_chars: Number(chunkMaxChars) || 600,
+          overlap: Number(chunkOverlap) || 0,
+          dataset_id: null,
+          label: chunkLabel,
+        }),
+      });
+      if (!res.ok) throw new Error(`chunking failed (${res.status})`);
+      const data = (await res.json()) as { created_items: number; dataset_id: string };
+      setNotice(
+        `${data.created_items} Items aus der Quelle erstellt (${chunkStrategy}). Partition: ${data.dataset_id.slice(0, 8)}…`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(`Chunking fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const annotateSelection = async () => {
+    if (selected.size === 0) return;
+    setBusy(true);
+    try {
+      const payload = {
+        provider_id: providers.find((p) => p.kind === "openai_compatible")?.id,
+        item_ids: Array.from(selected),
+        instruction: annotationInstruction,
+        labels: annotationLabels
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      const res = await fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`annotation failed (${res.status})`);
+      const data = (await res.json()) as { annotated: number; failed: number; errors: string[] };
+      setNotice(
+        `KI-Annotation: ${data.annotated} annotiert, ${data.failed} übersprungen.`,
+      );
+      await refresh();
+    } catch (err) {
+      setError(`Annotation fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const labelCounts = items.reduce<Record<string, number>>((acc, item) => {
     acc[item.label] = (acc[item.label] ?? 0) + 1;
     return acc;
@@ -160,6 +279,140 @@ export default function TrainingData() {
 
       {error && <div className="empty-state">{error}</div>}
       {notice && <div className="stat-label">{notice}</div>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginTop: 0 }}>
+          Quellen & Pipeline-Start <HelpBubble helpId="train-data.sources" />
+        </h3>
+        <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          <input
+            className="input"
+            placeholder="Quellname, z.B. BFO_SSOT.txt"
+            value={sourceName}
+            onChange={(e) => setSourceName(e.target.value)}
+            style={{ width: 220 }}
+          />
+          <textarea
+            className="input"
+            placeholder="Dokument hier einfügen — oder Datei unten laden (Text, Markdown, JSON, SSOT-Export)"
+            value={sourceContent}
+            onChange={(e) => setSourceContent(e.target.value)}
+            style={{ width: "100%", minHeight: 80 }}
+          />
+          <label className="button">
+            Datei laden
+            <input
+              type="file"
+              accept=".txt,.md,.json,.jsonl,text/*"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const text = await file.text();
+                setSourceName((prev) => prev || file.name);
+                setSourceContent(text);
+              }}
+            />
+          </label>
+          <button
+            className="button button-primary"
+            disabled={busy || !sourceContent.trim()}
+            onClick={() => void uploadSource()}
+          >
+            Quelle speichern
+          </button>
+        </div>
+
+        {sources.length > 0 && (
+          <table className="table" style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Größe</th>
+                <th>sha256</th>
+                <th>
+                  Chunking <HelpBubble helpId="train-data.chunking" />
+                </th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {sources.map((doc) => (
+                <tr key={doc.id}>
+                  <td>{doc.name}</td>
+                  <td>{(doc.size / 1024).toFixed(1)} KB</td>
+                  <td
+                    title={doc.sha256}
+                    style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}
+                  >
+                    {doc.sha256.slice(0, 12)}…
+                  </td>
+                  <td>
+                    <div className="field-row" style={{ gap: 6 }}>
+                      <select
+                        className="select"
+                        value={chunkStrategy}
+                        onChange={(e) => setChunkStrategy(e.target.value)}
+                        aria-label="Chunking-Strategie"
+                        title="Chunking-Strategie"
+                      >
+                        <option value="paragraph">Absatz</option>
+                        <option value="sentence">Satz</option>
+                        <option value="window">Fenster</option>
+                      </select>
+                      <input
+                        className="input"
+                        type="number"
+                        min={40}
+                        value={chunkMaxChars}
+                        onChange={(e) => setChunkMaxChars(e.target.value)}
+                        title="max. Zeichen pro Chunk"
+                        style={{ width: 70 }}
+                      />
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        value={chunkOverlap}
+                        onChange={(e) => setChunkOverlap(e.target.value)}
+                        title="Überlappung (nur Fenster)"
+                        style={{ width: 60 }}
+                      />
+                      <input
+                        className="input"
+                        placeholder="label (kebab-case)"
+                        value={chunkLabel}
+                        onChange={(e) => setChunkLabel(e.target.value)}
+                        style={{ width: 150 }}
+                      />
+                      <button
+                        className="button"
+                        disabled={busy}
+                        onClick={() => void chunkSource(doc.id)}
+                      >
+                        Chunking starten
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <button
+                      className="button button-ghost"
+                      onClick={async () => {
+                        await fetch(`/api/sources/${doc.id}`, { method: "DELETE" }).catch(
+                          () => {},
+                        );
+                        setSources((prev) => prev.filter((s) => s.id !== doc.id));
+                      }}
+                    >
+                      Löschen
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {datasets.length === 0 ? (
         <div className="empty-state">
@@ -195,8 +448,53 @@ export default function TrainingData() {
           </div>
 
           {selected.size > 0 && (
-            <div className="field-row">
-              <b>{selected.size} selected:</b>
+            <div className="card" style={{ margin: "12px 0" }}>
+              <h3 style={{ marginTop: 0 }}>
+                Auswahl: {selected.size} Items <HelpBubble helpId="train-data.annotation" />
+              </h3>
+              <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
+                <select
+                  className="select"
+                  value={providerId}
+                  onChange={(e) => setProviderId(e.target.value)}
+                  aria-label="Annotation-Provider"
+                  title="Annotation-Provider"
+                >
+                  <option value="">
+                    {providers.find((p) => p.kind === "openai_compatible")
+                      ? " — Provider wählen — "
+                      : " — erst in Settings einen OpenAI-kompatiblen Provider anlegen — "}
+                  </option>
+                  {providers
+                    .filter((p) => p.kind === "openai_compatible")
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+                <input
+                  className="input"
+                  placeholder="erlaubte Labels (Komma-getrennt, leer = aus Datensatz)"
+                  value={annotationLabels}
+                  onChange={(e) => setAnnotationLabels(e.target.value)}
+                  style={{ width: 280 }}
+                />
+                <input
+                  className="input"
+                  placeholder="Instruktion für das Modell (optional)"
+                  value={annotationInstruction}
+                  onChange={(e) => setAnnotationInstruction(e.target.value)}
+                  style={{ width: 280 }}
+                />
+                <button
+                  className="button button-primary"
+                  disabled={busy || !providerId}
+                  onClick={() => void annotateSelection()}
+                >
+                  KI-Annotation starten
+                </button>
+              </div>
               {STATUSES.map((st) => (
                 <button
                   key={st}
@@ -206,7 +504,6 @@ export default function TrainingData() {
                   → {st}
                 </button>
               ))}
-              <span style={{ width: 12 }} />
               {SPLITS.map((sp) => (
                 <button
                   key={sp}
@@ -278,10 +575,12 @@ export default function TrainingData() {
           </table>
 
           <div className="card" style={{ marginTop: 12 }}>
-            <h3 style={{ marginTop: 0 }}>Conversion pipeline</h3>
+            <h3 style={{ marginTop: 0 }}>
+              Konvertierung & Export <HelpBubble helpId="train-data.export" />
+            </h3>
             <p className="stat-label">
-              Stratified train/dev split over all items per label (seeded, deterministic),
-              then a dataset hash over the full item snapshot.
+              Stratified train/dev split (seeded, per label), dataset hash, spaCy-fähiger
+              JSONL-Export — nur curated + approved fließen in den Export.
             </p>
             <div className="field-row">
               <label>
@@ -299,6 +598,14 @@ export default function TrainingData() {
               <button className="button button-primary" onClick={() => void runConversion()}>
                 Run conversion
               </button>
+              <a
+                className="button"
+                href={`/api/datasets/${active}/export?status=approved`}
+                download
+                title="JSONL-Export (nur approved Items)"
+              >
+                Export JSONL
+              </a>
             </div>
             {jobs.length > 0 && (
               <table className="table" style={{ marginTop: 8 }}>

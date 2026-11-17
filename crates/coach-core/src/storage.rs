@@ -13,7 +13,7 @@
 use crate::error::{CoreError, Result};
 use crate::model::{
     ConversionJob, DataItem, DataItemHistory, Dataset, Image, MetricPoint, Run, Scope, Session,
-    Visualization,
+    SourceDoc, Visualization,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -93,6 +93,12 @@ pub trait Storage: Send + Sync {
     fn put_scope(&self, scope: Scope) -> Result<Scope>;
     fn list_scopes(&self) -> Result<Vec<Scope>>;
     fn delete_scope(&self, id: &str) -> Result<()>;
+
+    // Source documents (pipeline stage 1: ingestion)
+    fn put_source_doc(&self, doc: SourceDoc) -> Result<SourceDoc>;
+    fn get_source_doc(&self, id: &str) -> Result<SourceDoc>;
+    fn list_source_docs(&self) -> Result<Vec<SourceDoc>>;
+    fn delete_source_doc(&self, id: &str) -> Result<()>;
 }
 
 /// Column-partitioned layout for the optional Parquet analytics layer (the
@@ -129,6 +135,7 @@ pub struct InMemoryStore {
     item_history: RwLock<Vec<DataItemHistory>>,
     conversion_jobs: RwLock<HashMap<String, ConversionJob>>,
     scopes: RwLock<HashMap<String, Scope>>,
+    source_docs: RwLock<HashMap<String, SourceDoc>>,
 }
 
 impl InMemoryStore {
@@ -425,6 +432,44 @@ impl Storage for InMemoryStore {
             .remove(id)
             .map(drop)
             .ok_or_else(|| CoreError::NotFound(format!("scope {id}")))
+    }
+
+    fn put_source_doc(&self, doc: SourceDoc) -> Result<SourceDoc> {
+        self.source_docs
+            .write()
+            .unwrap()
+            .insert(doc.id.clone(), doc.clone());
+        Ok(doc)
+    }
+
+    fn get_source_doc(&self, id: &str) -> Result<SourceDoc> {
+        self.source_docs
+            .read()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CoreError::NotFound(format!("source doc {id}")))
+    }
+
+    fn list_source_docs(&self) -> Result<Vec<SourceDoc>> {
+        let mut docs: Vec<_> = self
+            .source_docs
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        docs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(docs)
+    }
+
+    fn delete_source_doc(&self, id: &str) -> Result<()> {
+        self.source_docs
+            .write()
+            .unwrap()
+            .remove(id)
+            .map(drop)
+            .ok_or_else(|| CoreError::NotFound(format!("source doc {id}")))
     }
 }
 

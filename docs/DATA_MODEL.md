@@ -118,6 +118,26 @@ appends a `DataItemHistory` row.
 id, model_path, port, pid, status (starting/ready/unhealthy/stopped),
 started_at. Managed by coach-api, **not persisted** — respawned on demand.
 
+## Training-data pipeline (sources → chunks → annotations → export)
+
+- `source_docs`: id, name, kind, size, sha256, content, created_at. Every
+  uploaded document is stored with its hash so chunking is reproducible and
+  provenance is auditable. Items produced from a source carry
+  `source = "<source-name>#<chunk-index>"`.
+- Practices enforced by the pipeline:
+  - Chunking is deterministic over the stored content (strategies: paragraph,
+    sentence, window with overlap); duplicates within a dataset are skipped.
+  - AI annotation (`POST /api/annotations`) resolves items by id, calls an
+    OpenAI-compatible provider, validates the returned label against the
+    allowed label set, writes the item back with status raw (draft) and
+    records the change in `item_history` with actor `ai:<provider>` — the
+    model never sets approved.
+- Export (`GET /api/datasets/{id}/export?status=…`) yields one JSON line per
+  item `{text, label, type: "textcat", meta: {item_id, source, status}}` —
+  the input format `spacy convert ... --converter json` accepts. Only items
+  whose status matches the filter (default: all; UI defaults to
+  `status=approved`) are exported.
+
 ## Storage mapping
 
 Rust structs persist to the single SQLite database (`coach.db`); each entity

@@ -515,3 +515,76 @@ body {
 .viz-preview .entities {
   max-width: 100%;
 }
+
+/* HelpBubble — "?" circle with hover/focus tooltip */
+.help-bubble {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: middle;
+  outline: none;
+}
+.help-bubble-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted, #888);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+  user-select: none;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.help-bubble:hover .help-bubble-trigger,
+.help-bubble:focus .help-bubble-trigger {
+  border-color: var(--color-accent, #4c8);
+  color: var(--color-accent, #4c8);
+}
+.help-bubble-panel {
+  position: absolute;
+  z-index: 40;
+  left: 50%;
+  top: 22px;
+  transform: translateX(-50%);
+  width: 340px;
+  max-width: 78vw;
+  background: var(--color-surface-raised, #1c1f26);
+  color: var(--color-text, #e6e8eb);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.35));
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  font-size: 12.5px;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.help-bubble:hover .help-bubble-panel,
+.help-bubble:focus .help-bubble-panel,
+.help-bubble:focus-within .help-bubble-panel {
+  opacity: 1;
+  pointer-events: auto;
+}
+.help-bubble-example {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--color-surface, #14161b);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-bubble-panel,
+  .help-bubble-trigger {
+    transition: none;
+  }
+}
