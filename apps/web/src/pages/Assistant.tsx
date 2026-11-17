@@ -29,6 +29,7 @@ export default function Assistant() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<string[]>([]);
   const [proposals, setProposals] = useState<AssistantProposal[]>([]);
   const [profile, setProfile] = useState<DatasetProfile[] | null>(null);
   const [spacy, setSpacy] = useState<SpacyInfo | null>(null);
@@ -114,18 +115,31 @@ export default function Assistant() {
     setMessages(next);
     setInput("");
     setBusy(true);
+    setActivity([]);
     try {
       setError(null);
-      const res = await api.assistantTurn(providerId, next);
-      let reply = res.reply || "(leere Antwort)";
-      if (res.tool_trace.length > 0) {
-        const lines = res.tool_trace
-          .map((entry) => `runde ${entry.round}: ${entry.tool} ${entry.ok ? "ok" : "fehlgeschlagen"}${entry.query ? ` (${entry.query})` : ""}`)
-          .join("\n");
-        reply = `${lines}\n\n${reply}`;
-      }
-      setMessages([...next, { role: "assistant", content: reply }]);
-      if (res.proposals.length > 0) await refresh();
+      let finalReply = "";
+      let proposalsQueued = 0;
+      await api.assistantTurn(providerId, next, (event) => {
+        if (event.type === "tool") {
+          setActivity((lines) => [
+            ...lines,
+            `Runde ${event.round}: ${event.tool}${event.query ? ` (${event.query})` : ""} — ${event.ok ? "erledigt" : "fehlgeschlagen"}`,
+          ]);
+        } else if (event.type === "thinking" && event.text.trim()) {
+          setActivity((lines) => [...lines, event.text.trim()]);
+        } else if (event.type === "proposals") {
+          proposalsQueued = event.count;
+        } else if (event.type === "final") {
+          finalReply = event.reply;
+        }
+      });
+      setMessages([
+        ...next,
+        { role: "assistant", content: finalReply || "(leere Antwort)" },
+      ]);
+      setActivity([]);
+      if (proposalsQueued > 0) await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setMessages(next.slice(0, -1));
@@ -231,7 +245,21 @@ export default function Assistant() {
               ))}
             </div>
           ))}
-          {busy && <p className="stat-label">Assistent denkt…</p>}
+          {busy && (
+            <div
+              style={{
+                alignSelf: "flex-start",
+                maxWidth: "80%",
+                borderLeft: "3px solid var(--border-strong, var(--border))",
+                paddingLeft: 10,
+              }}
+            >
+              <p className="stat-label" style={{ margin: 0 }}>Assistent denkt…</p>
+              {activity.map((line, index) => (
+                <p key={index} className="stat-label" style={{ margin: "4px 0 0" }}>{line}</p>
+              ))}
+            </div>
+          )}
         </div>
         <div className="field-row" style={{ marginTop: 10 }}>
           <input

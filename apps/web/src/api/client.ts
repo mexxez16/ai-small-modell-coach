@@ -385,12 +385,8 @@ export const api = {
   assistantTurn: (
     providerId: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>,
-  ) =>
-    request<{
-      reply: string;
-      tool_trace: Array<{ round: number; tool: string; query?: string; ok: boolean }>;
-      proposals: AssistantProposal[];
-    }>("POST", "/api/assistant/turn", { provider_id: providerId, messages }),
+    onEvent: (event: AssistantStreamEvent) => void,
+  ) => streamNdjson("/api/assistant/turn", { provider_id: providerId, messages }, onEvent),
   assistantProposals: () =>
     request<{ proposals: AssistantProposal[] }>("GET", "/api/assistant/proposals"),
   assistantAcceptProposal: (id: string) =>
@@ -423,3 +419,56 @@ export type AssistantProposal = {
     goal?: unknown;
   };
 };
+
+export type AssistantStreamEvent =
+  | { type: "round_start"; round: number }
+  | { type: "tool"; tool: string; round: number; ok: boolean; query?: string }
+  | { type: "thinking"; round: number; text: string }
+  | { type: "proposal"; kind: string; step?: string }
+  | { type: "proposals"; count: number }
+  | { type: "error"; message: string }
+  | { type: "final"; reply: string; tool_trace: unknown[]; proposals: unknown[] };
+
+/** POST + NDJSON-Stream lesen; ruft onEvent pro Zeile auf. */
+async function streamNdjson(
+  path: string,
+  body: unknown,
+  onEvent: (event: AssistantStreamEvent) => void,
+): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const json = (await res.json()) as { error?: string };
+      if (json.error) detail = json.error;
+    } catch {
+      /* statusText fallback */
+    }
+    throw new Error(detail);
+  }
+  if (!res.body) throw new Error("Streaming wird nicht unterstützt.");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line) {
+        try {
+          onEvent(JSON.parse(line) as AssistantStreamEvent);
+        } catch {
+          /* unparseable line: skip */
+        }
+      }
+    }
+  }
+}

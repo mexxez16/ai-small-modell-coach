@@ -287,15 +287,16 @@ pub struct TurnRequest {
     pub messages: Vec<Value>,
 }
 
-/// `POST /api/assistant/turn` — one advising turn with a bounded tool loop:
-/// the model may call read-only tools (`docs_search`, `get_data_profile`)
-/// inside one turn; their results are fed back so the next model call can
-/// use them. Write actions (`propose_*`) never execute — they become
-/// pending proposals for the workbench.
+/// `POST /api/assistant/turn` — one advising turn, streamed as NDJSON lines:
+/// `round_start` per model call, `tool` per executed read action,
+/// `thinking` with intermediate opportunities to see the reasoning,
+/// `final` with the finished reply. Write actions (`propose_*`) never
+/// execute — they land in the pending-proposal queue and are reported via
+/// a `proposals` event.
 pub async fn assistant_turn(
     State(state): State<AppState>,
     Json(body): Json<TurnRequest>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<axum::response::Response, ApiError> {
     if body.messages.is_empty() {
         return Err(ApiError(coach_core::CoreError::InvalidQuery(
             "messages must not be empty".into(),
@@ -313,9 +314,42 @@ pub async fn assistant_turn(
         )));
     }
 
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(8);
+    tokio::spawn(async move {
+        run_turn(&state, &provider, body.messages, &tx).await;
+    });
+
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|event| {
+            let line = serde_json::to_string(&event).unwrap_or_else(|_| "{}".into());
+            (Ok::<_, std::convert::Infallible>(format!("{line}\n")), rx)
+        })
+    });
+    Ok(axum::response::Response::builder()
+        .header("content-type", "application/x-ndjson")
+        .body(axum::body::Body::from_stream(stream))
+        .expect("static response builder"))
+}
+
+/// Full turn: model loop with live NDJSON event emission. Runs detached in a
+/// spawned task; ending events (`final`/`error`) close the channel.
+async fn run_turn(
+    state: &AppState,
+    provider: &crate::providers::Provider,
+    user_messages: Vec<Value>,
+    tx: &tokio::sync::mpsc::Sender<Value>,
+) {
+    let send = |tx: &tokio::sync::mpsc::Sender<Value>, event: Value| {
+        let tx = tx.clone();
+        async move {
+            // Receiver gone (client cancelled): drop the rest silently.
+            let _ = tx.send(event).await;
+        }
+    };
+
     let mut convo: Vec<Value> =
-        vec![json!({"role": "system", "content": build_system_prompt(&state)})];
-    convo.extend(body.messages.iter().cloned());
+        vec![json!({"role": "system", "content": build_system_prompt(state)})];
+    convo.extend(user_messages.iter().cloned());
 
     let mut all = read_proposals();
     let mut queued: Vec<Proposal> = Vec::new();
@@ -323,7 +357,14 @@ pub async fn assistant_turn(
     let mut final_reply = String::new();
 
     for round in 0..MAX_TOOL_ROUNDS {
-        let raw_text = call_model_once(&state, &provider, &convo).await?;
+        send(tx, json!({"type": "round_start", "round": round + 1})).await;
+        let raw_text = match call_model_once(state, provider, &convo).await {
+            Ok(text) => text,
+            Err(err) => {
+                send(tx, json!({"type": "error", "message": err.0.to_string()})).await;
+                return;
+            }
+        };
         let (text, actions) = parse_protocol(&raw_text);
 
         // 1) Write actions: become proposals, nothing else.
@@ -371,6 +412,13 @@ pub async fn assistant_turn(
                         "query": query,
                         "ok": ok,
                     }));
+                    send(tx, json!({
+                        "type": "tool",
+                        "round": round + 1,
+                        "tool": "docs_search",
+                        "query": query,
+                        "ok": ok,
+                    })).await;
                     results.push(json!({"tool": "docs_search", "ok": ok, "result": value}));
                 }
                 Some("get_data_profile") => {
@@ -384,6 +432,12 @@ pub async fn assistant_turn(
                         "tool": "get_data_profile",
                         "ok": ok,
                     }));
+                    send(tx, json!({
+                        "type": "tool",
+                        "round": round + 1,
+                        "tool": "get_data_profile",
+                        "ok": ok,
+                    })).await;
                     results.push(json!({"tool": "get_data_profile", "ok": ok, "result": value}));
                 }
                 _ => {}
@@ -392,6 +446,10 @@ pub async fn assistant_turn(
 
         // No tool usage this round: the model's text is the final answer.
         if results.is_empty() {
+            // Intermediate narrative first — the user watches it arrive.
+            if !text.is_empty() {
+                send(tx, json!({"type": "thinking", "round": round + 1, "text": text})).await;
+            }
             final_reply = if has_writes && text.is_empty() {
                 "Ich habe Vorschläge hinterlegt — sieh im Bereich „Vorschläge“ nach."
                     .to_string()
@@ -411,10 +469,15 @@ pub async fn assistant_turn(
                     .unwrap_or_else(|_| "[]".into())
             ),
         }));
+        // The model continues in the next round.
     }
 
     if !queued.is_empty() {
-        write_proposals(&all)?;
+        send(tx, json!({"type": "proposals", "count": queued.len()})).await;
+    if let Err(err) = write_proposals(&all) {
+        send(tx, json!({"type": "error", "message": err.0.to_string()})).await;
+        return;
+    }
     }
 
     let reply = if final_reply.is_empty() {
@@ -422,11 +485,12 @@ pub async fn assistant_turn(
     } else {
         final_reply
     };
-    Ok(Json(json!({
+    send(tx, json!({
+        "type": "final",
         "reply": reply,
         "tool_trace": tool_trace,
         "proposals": queued,
-    })))
+    })).await;
 }
 
 /// One non-streaming chat completion against the given provider.
