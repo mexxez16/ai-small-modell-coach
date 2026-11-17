@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import HelpBubble from "../components/HelpBubble";
 import ReviewDeck from "../components/ReviewDeck";
 
@@ -51,13 +51,19 @@ type SourceDoc = {
   created_at: string;
 };
 
-export default function TrainingData() {
+type TrainingDataProps = {
+  mode?: "sessions" | "runs";
+};
+
+export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
   const [datasets, setDatasets] = useState<Array<{ id: string; name: string }>>([]);
   const [active, setActive] = useState<string>("");
   const [items, setItems] = useState<DataItem[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [historyFor, setHistoryFor] = useState<DataItem | null>(null);
+  const [sessionCounts, setSessionCounts] = useState<Record<string, { total: number; curated: number }>>({});
+  const [searchParams] = useSearchParams();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [devRatio, setDevRatio] = useState("0.2");
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +114,13 @@ export default function TrainingData() {
     refresh().catch((err: Error) => setError(err.message));
   }, [refresh]);
 
+  // Deep link: /training-data/runs?dataset=<id> preselects the view.
+  useEffect(() => {
+    const wanted = searchParams.get("dataset");
+    if (wanted) setActive(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Validation report refreshes with the dataset switch.
   useEffect(() => {
     if (!active) return;
@@ -130,6 +143,32 @@ export default function TrainingData() {
       .then((d) => setProviders(d.providers ?? []))
       .catch(() => {});
   }, []);
+
+  // Session overview counts: raw vs. curated per dataset.
+  useEffect(() => {
+    if (mode !== "sessions") return;
+    let cancelled = false;
+    (async () => {
+      const counts: Record<string, { total: number; curated: number }> = {};
+      for (const d of datasets) {
+        try {
+          const rows = (await (
+            await fetch(`/api/datasets/${d.id}/items`)
+          ).json()) as DataItem[];
+          counts[d.id] = {
+            total: rows.length,
+            curated: rows.filter((r) => r.status === "curated" || r.status === "approved").length,
+          };
+        } catch {
+          counts[d.id] = { total: 0, curated: 0 };
+        }
+      }
+      if (!cancelled) setSessionCounts(counts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [datasets, mode]);
 
   const bulkApply = async (patch: { status?: string; split?: string }) => {
     if (selected.size === 0) return;
@@ -305,6 +344,55 @@ export default function TrainingData() {
     acc[item.label] = (acc[item.label] ?? 0) + 1;
     return acc;
   }, {});
+
+  // Sessions mode: dataset overview (cards), linking into the run view.
+  if (mode === "sessions") {
+    return (
+      <div>
+        <div className="page-header">
+          <h1>Training Data Sessions</h1>
+          <p>
+            Kuratierte Datensatz-Pakete — jede Session fasst die Items eines
+            Trainings-Korpus zusammen. Öffne eine Session, um Items zu kuratieren
+            oder Konvertierungen zu starten.
+          </p>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {datasets.map((d) => (
+            <div key={d.id} className="card">
+              <h3 style={{ marginTop: 0, marginBottom: 4 }}>{d.name}</h3>
+              <div className="stat-label">
+                {sessionCounts[d.id]
+                  ? `${sessionCounts[d.id].total} Items · ${sessionCounts[d.id].curated} kuratiert`
+                  : "lädt…"}
+              </div>
+              <Link
+                className="button button-primary"
+                style={{ marginTop: 10, display: "inline-block" }}
+                to={`/training-data/runs?dataset=${d.id}`}
+              >
+                Session öffnen
+              </Link>
+            </div>
+          ))}
+        </div>
+        {datasets.length === 0 && (
+          <div className="empty-state">
+            Noch keine Sessions. Lege eine über einen Quellen-Import an — siehe
+            Training Data Runs → Quelle speichern.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Run-mode empty state check first (needed for the page header).
 
   // Validation-badged review toolbar: Review start, issue summary, DocBin
   // export (requires a running render worker).

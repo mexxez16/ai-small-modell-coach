@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import RunDetail from "./pages/RunDetail";
 import Sessions from "./pages/Sessions";
 import Runs from "./pages/Runs";
+import ModelsPage from "./pages/Models";
 import TrainingData from "./pages/TrainingData";
 import Visualize from "./pages/Visualize";
 import Images from "./pages/Images";
@@ -20,16 +21,26 @@ import TerminalDock from "./components/TerminalDock";
 const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: string }> }> = [
   {
     section: "Overview",
+    items: [{ to: "/", label: "Dashboard" }],
+  },
+  {
+    section: "Finetuning",
     items: [
-      { to: "/", label: "Dashboard" },
       { to: "/sessions", label: "Sessions" },
       { to: "/runs", label: "Runs" },
+      { to: "/models", label: "Models" },
     ],
   },
   {
     section: "Data",
     items: [
-      { to: "/training-data", label: "Training Data" },
+      { to: "/training-data/sessions", label: "Training Data Sessions" },
+      { to: "/training-data/runs", label: "Training Data Runs" },
+    ],
+  },
+  {
+    section: "Visual Analysis",
+    items: [
       { to: "/visualize", label: "Visualize" },
       { to: "/images", label: "Images" },
     ],
@@ -99,7 +110,7 @@ function Sidebar() {
     <nav className="sidebar" aria-label="Main navigation">
       <div className="sidebar-brand">
         <span className="sidebar-brand-mark" aria-hidden="true" />
-        <span>Modell Coach</span>
+        <span>Small Model Coach</span>
       </div>
       {NAV_SECTIONS.map((group) => (
         <div key={group.section}>
@@ -258,15 +269,18 @@ function App() {
       />
       <main className="content">
         <Routes>
+          <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/runs/:runId" element={<RunDetail />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/runs" element={<Runs />} />
-          <Route path="/training-data" element={<TrainingData />} />
+          <Route path="/models" element={<ModelsPage />} />
+          <Route path="/training-data/sessions" element={<TrainingData mode="sessions" />} />
+          <Route path="/training-data/runs" element={<TrainingData mode="runs" />} />
           <Route path="/visualize" element={<Visualize />} />
           <Route path="/images" element={<Images />} />
           <Route path="/settings" element={<Settings />} />
-        </Routes>
+          </Routes>        </Routes>
       </main>
       <ChatDock
         open={chatOpen}
