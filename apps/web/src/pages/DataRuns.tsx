@@ -898,7 +898,6 @@ export default function DataRuns() {
 
           {sectionCard("1", "Data Input Selection", "pipeline.input", (
             <>
-            <StepConfigControls step="input" payload={stepPayload("input")} onApply={applyStepValues} />
             <>
               <p className="stat-label">
                 Quelle der Pipeline: strukturierte JSON-Datei oder Textdokument.
@@ -940,13 +939,13 @@ export default function DataRuns() {
                   Ohne Quelle kann die Pipeline nicht ausgeführt werden.
                 </p>
               )}
+            <StepConfigControls step="input" payload={stepPayload("input")} onApply={applyStepValues} />
             </>
             </>
           ))}
 
           {sectionCard("2", "Pre-Processing (Chunking)", "pipeline.preprocessing", (
             <>
-            <StepConfigControls step="preprocessing" payload={stepPayload("preprocessing")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
                 <label>
@@ -1003,13 +1002,13 @@ export default function DataRuns() {
                 Vorkonfiguriert ist der deterministische Chunker (Absatz/Satz/Fenster) —
                 reproduzierbar und ohne LLM-Kosten. LLM-gestützte Zerlegung folgt als Option.
               </p>
+            <StepConfigControls step="preprocessing" payload={stepPayload("preprocessing")} onApply={applyStepValues} />
             </>
             </>
           ))}
 
           {sectionCard("3", "Data Output Settings (Beispiel-Typen)", "pipeline.output_settings", (
             <>
-            <StepConfigControls step="output_settings" payload={stepPayload("output_settings")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 12 }}>
                 {EXAMPLE_TYPES.map((t) => (
@@ -1035,13 +1034,13 @@ export default function DataRuns() {
                 relevance (negative/contrastive), relation (Tripel-Paare mit
                 {" <SEP> "}-Trenner).
               </p>
+            <StepConfigControls step="output_settings" payload={stepPayload("output_settings")} onApply={applyStepValues} />
             </>
             </>
           ))}
 
           {sectionCard("4", "Data Processing (KI / Modell)", "pipeline.processing", (
             <>
-            <StepConfigControls step="processing" payload={stepPayload("processing")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
                 <select className="select" value={cfg.providerId} onChange={(e) => updateAndPersist("providerId", e.target.value)} aria-label="Modell/Provider" style={{ width: 300 }}>
@@ -1095,13 +1094,13 @@ export default function DataRuns() {
                   </button>
                 </div>
               </div>
+            <StepConfigControls step="processing" payload={stepPayload("processing")} onApply={applyStepValues} />
             </>
             </>
           ))}
 
           {sectionCard("5", "Examples Curation (Human Check)", "pipeline.curation", (
             <>
-            <StepConfigControls step="curation" payload={stepPayload("curation")} onApply={applyStepValues} />
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 12 }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1137,6 +1136,7 @@ export default function DataRuns() {
         }).catch(() => {});
       }}
     />
+            <StepConfigControls step="curation" payload={stepPayload("curation")} onApply={applyStepValues} />
             </>
             </>
           ))}
