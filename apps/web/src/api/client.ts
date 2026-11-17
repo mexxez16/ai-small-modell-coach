@@ -349,4 +349,77 @@ export const api = {
     request<T>("GET", `/api/config/${step}`),
   putStepConfig: (step: string, value: unknown) =>
     request<unknown>("PUT", `/api/config/${step}`, value),
+  // Assistent (goal advisor)
+  assistantStatus: () =>
+    request<{
+      goal: unknown | null;
+      config_steps: Record<string, { present: boolean; bytes: number }>;
+      providers_openai_compatible: number;
+      docs_mirror_versions: string[];
+    }>("GET", "/api/assistant/status"),
+  assistantSpacyStatus: (python?: string) =>
+    request<{
+      python: string;
+      installed: boolean;
+      spacy_version?: string | null;
+      installed_models?: string[];
+      error?: string | null;
+    }>(
+      "GET",
+      `/api/assistant/spacy-status${python ? `?python=${encodeURIComponent(python)}` : ""}`,
+    ),
+  assistantDataProfile: () =>
+    request<{
+      datasets: Array<{
+        dataset_id: string;
+        name: string;
+        source_ref: string;
+        items: number;
+        by_status: Record<string, number>;
+        by_kind: Record<string, number>;
+        by_label: Record<string, number>;
+        items_without_text: number;
+        duplicate_texts: number;
+      }>;
+    }>("GET", "/api/assistant/data-profile"),
+  assistantTurn: (
+    providerId: string,
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+  ) =>
+    request<{
+      reply: string;
+      protocol: "json" | "plain";
+      proposals: AssistantProposal[];
+    }>("POST", "/api/assistant/turn", { provider_id: providerId, messages }),
+  assistantProposals: () =>
+    request<{ proposals: AssistantProposal[] }>("GET", "/api/assistant/proposals"),
+  assistantAcceptProposal: (id: string) =>
+    request<{ accepted: string }>("POST", "/api/assistant/proposals/accept", { id }),
+  assistantRejectProposal: (id: string) =>
+    request<{ rejected: string }>("POST", "/api/assistant/proposals/reject", { id }),
+  assistantDocsPull: (version: string) =>
+    request<{ version: string; path: string }>("POST", "/api/assistant/docs/pull", {
+      version,
+    }),
+  assistantDocsSearch: (q: string, version?: string) =>
+    request<{ version: string; matches: Array<{ file: string; snippet: string }> }>(
+      "GET",
+      `/api/assistant/docs/search?q=${encodeURIComponent(q)}${
+        version ? `&version=${encodeURIComponent(version)}` : ""
+      }`,
+    ),
+};
+
+export type AssistantProposal = {
+  id: string;
+  created_at: string;
+  kind: "step_config" | "goal";
+  step?: string;
+  summary: string;
+  payload: {
+    tool: string;
+    step?: string;
+    config?: unknown;
+    goal?: unknown;
+  };
 };

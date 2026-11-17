@@ -17,6 +17,7 @@ import DataRuns from "./pages/DataRuns";
 import Visualize from "./pages/Visualize";
 import Images from "./pages/Images";
 import Settings from "./pages/Settings";
+import Assistant from "./pages/Assistant";
 import CommandPalette from "./components/CommandPalette";
 import ChatDock from "./components/ChatDock";
 import TerminalDock from "./components/TerminalDock";
@@ -50,7 +51,10 @@ const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: s
   },
   {
     section: "Workbench",
-    items: [{ to: "/settings", label: "Settings" }],
+    items: [
+      { to: "/assistant", label: "Assistent" },
+      { to: "/settings", label: "Settings" },
+    ],
   },
 ];
 
@@ -285,6 +289,7 @@ function App() {
         <Route path="/visualize" element={<Visualize />} />
         <Route path="/images" element={<Images />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/assistant" element={<Assistant />} />
         </Routes>
       </main>
       <ChatDock

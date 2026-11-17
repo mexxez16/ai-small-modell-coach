@@ -359,6 +359,16 @@ fn build_router(state: AppState) -> Router {
 
         .route("/api/settings/vibe", get(routes::settings::get_vibe_settings).put(routes::settings::set_vibe_model))
 
+        .route("/api/assistant/status", get(routes::assistant::assistant_status))
+        .route("/api/assistant/spacy-status", get(routes::assistant::spacy_status))
+        .route("/api/assistant/data-profile", get(routes::assistant::data_profile))
+        .route("/api/assistant/turn", post(routes::assistant::assistant_turn))
+        .route("/api/assistant/proposals", get(routes::assistant::list_proposals))
+        .route("/api/assistant/proposals/accept", post(routes::assistant::accept_proposal))
+        .route("/api/assistant/proposals/reject", post(routes::assistant::reject_proposal))
+        .route("/api/assistant/docs/pull", post(routes::assistant::docs_pull))
+        .route("/api/assistant/docs/search", get(routes::assistant::docs_search))
+
         .route("/api/openapi.json", get(openapi_json))
 
         .with_state(state.clone()).layer(axum::middleware::from_fn_with_state(state.clone(), require_token));
