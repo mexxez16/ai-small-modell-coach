@@ -269,18 +269,17 @@ function App() {
       />
       <main className="content">
         <Routes>
-          <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/runs/:runId" element={<RunDetail />} />
-          <Route path="/sessions" element={<Sessions />} />
-          <Route path="/runs" element={<Runs />} />
-          <Route path="/models" element={<ModelsPage />} />
-          <Route path="/training-data/sessions" element={<TrainingData mode="sessions" />} />
-          <Route path="/training-data/runs" element={<TrainingData mode="runs" />} />
-          <Route path="/visualize" element={<Visualize />} />
-          <Route path="/images" element={<Images />} />
-          <Route path="/settings" element={<Settings />} />
-          </Routes>        </Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/runs/:runId" element={<RunDetail />} />
+        <Route path="/sessions" element={<Sessions />} />
+        <Route path="/runs" element={<Runs />} />
+        <Route path="/models" element={<ModelsPage />} />
+        <Route path="/training-data/sessions" element={<TrainingData mode="sessions" />} />
+        <Route path="/training-data/runs" element={<TrainingData mode="runs" />} />
+        <Route path="/visualize" element={<Visualize />} />
+        <Route path="/images" element={<Images />} />
+        <Route path="/settings" element={<Settings />} />
+        </Routes>
       </main>
       <ChatDock
         open={chatOpen}
