@@ -770,10 +770,21 @@ fn stage_export(
             };
             lines.push(line.to_string());
         }
+        // Persist the artifact so the UI can open/download it per head
+        // (`GET /api/datasets/{id}/export/{head}`). Empty heads are skipped.
+        let artifact_path = export_artifact_path(dataset_id, &name);
+        if !lines.is_empty() {
+            if let Some(parent) = artifact_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&artifact_path, lines.join("\n"));
+        }
+        let written = lines.is_empty() || artifact_path.exists();
         artifacts.push(json!({
             "head": name,
             "rows": lines.len(),
             "filename": format!("{dataset_id}.{name}.jsonl"),
+            "written": written,
         }));
         if !lines.is_empty() {
             state.storage.append_item_history(DataItemHistory {
@@ -792,4 +803,33 @@ fn stage_export(
         "heads": artifacts,
         "note": "JSONL artifacts served via /api/datasets/{id}/export; DocBin via /export/docbin",
     }))
+}
+
+/// Directory holding per-head export artifacts of one data-run dataset.
+fn export_artifact_path(dataset_id: &str, head: &str) -> std::path::PathBuf {
+    crate::state::resolve_data_dir()
+        .join("exports")
+        .join(dataset_id)
+        .join(format!("{head}.jsonl"))
+}
+
+/// Serve a stored export artifact (`GET /api/datasets/{id}/export/{head}`).
+#[utoipa::path(get, path = "/api/datasets/{id}/export/{head}")]
+pub async fn get_export_artifact(
+    axum::extract::Path((dataset_id, head)): axum::extract::Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+    use coach_core::CoreError;
+    let path = export_artifact_path(&dataset_id, &head);
+    if !path.exists() {
+        return Err(CoreError::NotFound(format!(
+            "artifact {head} for dataset {dataset_id} — run the export stage first"
+        ))
+        .into());
+    }
+    let body = std::fs::read_to_string(&path).map_err(CoreError::Io)?;
+    Ok(axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "application/x-ndjson")
+        .body(axum::body::Body::from(body))
+        .map_err(|e| CoreError::Serialization(serde_json::Error::io(std::io::Error::other(e))))?)
 }

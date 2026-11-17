@@ -1263,6 +1263,55 @@ export default function DataRuns() {
                   "wird bei der ersten Ausführung erzeugt"
                 )}
               </p>
+              {(() => {
+                // Collect per-head artifacts from every export stage result.
+                const heads: Array<{ head: string; rows: number; file: string }> = [];
+                for (const [key, value] of Object.entries(detail.results ?? {})) {
+                  if (!key.includes("export")) continue;
+                  const v = value as { heads?: Array<{ head: string; rows: number }> };
+                  for (const h of v.heads ?? []) {
+                    heads.push({ head: h.head, rows: h.rows, file: `${detail.dataset_id}/${h.head}` });
+                  }
+                }
+                if (heads.length === 0) return null;
+                return (
+                  <table className="table" style={{ marginBottom: 10 }}>
+                    <thead>
+                      <tr>
+                        <th>Datei</th>
+                        <th>Zeilen</th>
+                        <th style={{ width: 200 }}>Aktionen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {heads.map((h, i) => (
+                        <tr key={`${h.file}-${i}`}>
+                          <td style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{h.head}.jsonl</td>
+                          <td>{h.rows}</td>
+                          <td className="field-row" style={{ gap: 6 }}>
+                            <a
+                              className="button"
+                              href={`/api/datasets/${h.file}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Öffnen
+                            </a>
+                            <a
+                              className="button button-primary"
+                              href={`/api/datasets/${h.file}`}
+                              download={`${h.head}.jsonl`}
+                            >
+                              Download
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+
               {detail.results && Object.keys(detail.results).length > 0 ? (
                 <div
                   style={{

@@ -1465,7 +1465,17 @@ pub async fn annotate_items_core(
             errors.push(format!("item {item_id} not found"));
             continue;
         };
-        let Some(text) = item.input_fields.text.clone() else {
+        // Pair items carry no text — compose the triple surface so the LLM
+        // call has something to classify instead of failing.
+        let text = item.input_fields.text.clone().or_else(|| {
+            let (s, p, o) = (
+                item.input_fields.subject.as_deref()?,
+                item.input_fields.predicate.as_deref()?,
+                item.input_fields.object.as_deref()?,
+            );
+            Some(format!("{} {} {}", s, p, o))
+        });
+        let Some(text) = text else {
             failed += 1;
             errors.push(format!("item {item_id} has no text"));
             continue;
