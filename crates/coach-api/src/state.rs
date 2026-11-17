@@ -116,6 +116,14 @@ pub struct AppState {
     pub workspace_dir: PathBuf,
 }
 
+/// Resolve the data directory the same way [`AppState::new`] does — used by
+/// non-state helpers (e.g. step config files).
+pub fn resolve_data_dir() -> PathBuf {
+    std::env::var("COACH_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./data"))
+}
+
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let data_dir = config

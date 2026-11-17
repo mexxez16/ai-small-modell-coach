@@ -334,4 +334,8 @@ export const api = {
   ) => request<DataRun>("PUT", `/api/data-runs/${id}`, patch),
   deleteDataRun: (id: string) => request<void>("DELETE", `/api/data-runs/${id}`),
   executeDataRun: (id: string) => request<DataRun>("POST", `/api/data-runs/${id}/execute`),
+  getStepConfig: <T = Record<string, unknown>>(step: string) =>
+    request<T>("GET", `/api/config/${step}`),
+  putStepConfig: (step: string, value: unknown) =>
+    request<unknown>("PUT", `/api/config/${step}`, value),
 };

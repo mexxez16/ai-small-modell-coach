@@ -2034,3 +2034,67 @@ pub async fn fs_list(
         "entries": entries,
     })))
 }
+
+// ---------------------------------------------------------------------------
+// Per-step configuration files (<data_dir>/config/<step>.json)
+// ---------------------------------------------------------------------------
+
+/// Steps that may be stored via config files (pipeline sections).
+const CONFIG_STEPS: &[&str] = &[
+    "input", "preprocessing", "output_settings", "processing", "curation",
+];
+
+/// Read the configuration JSON for one pipeline step.
+#[utoipa::path(get, path = "/api/config/{step}", responses((status = 200, body = serde_json::Value)))]
+pub async fn get_step_config(
+    AxumPath(step): AxumPath<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !CONFIG_STEPS.contains(&step.as_str()) {
+        return Err(coach_core::CoreError::InvalidQuery(format!(
+            "unknown step: {step}"
+        ))
+        .into());
+    }
+    read_step_config(&step).map(Json)
+}
+
+/// Write the configuration JSON for one pipeline step.
+#[utoipa::path(put, path = "/api/config/{step}", request_body = serde_json::Value, responses((status = 200, body = serde_json::Value)))]
+pub async fn put_step_config(
+    AxumPath(step): AxumPath<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !CONFIG_STEPS.contains(&step.as_str()) {
+        return Err(coach_core::CoreError::InvalidQuery(format!(
+            "unknown step: {step}"
+        ))
+        .into());
+    }
+    write_step_config(&step, &body)?;
+    Ok(Json(body))
+}
+
+fn step_config_path(step: &str) -> std::path::PathBuf {
+    let base = crate::state::resolve_data_dir();
+    base.join("config").join(format!("{step}.json"))
+}
+
+fn read_step_config(step: &str) -> Result<serde_json::Value, ApiError> {
+    let path = step_config_path(step);
+    if !path.exists() {
+        return Ok(json!({}));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| coach_core::CoreError::Io(e))?;
+    serde_json::from_str(&text).map_err(|e| coach_core::CoreError::Serialization(e).into())
+}
+
+fn write_step_config(step: &str, value: &serde_json::Value) -> Result<(), ApiError> {
+    let path = step_config_path(step);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| coach_core::CoreError::Io(e))?;
+    }
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| coach_core::CoreError::Serialization(e))?;
+    std::fs::write(&path, text).map_err(|e| coach_core::CoreError::Io(e).into())
+}

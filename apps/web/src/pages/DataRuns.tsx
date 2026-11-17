@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type DataRun, type DataRunStage, type DataSession, type SourceDoc } from "../api/client";
 import HelpBubble from "../components/HelpBubble";
@@ -163,13 +163,144 @@ export default function DataRuns() {
     api.listProviders().then((d) => setProviders((d.providers ?? []) as never)).catch(() => {});
   }, [refresh]);
 
+  // Step configs boot from the run's stages; when a run is selected AND the
+  // config files know nothing yet, the run becomes the initial template. Any
+  // section change (inputs below) then auto-saves into <config>/<step>.json
+  // and back into the run stages — two-way, no manual re-entry.
+  const stepLoadTimer = useRef<number | null>(null);
+
   useEffect(() => {
-    if (detail && Array.isArray(detail.stages)) {
-      setCfg(configFromStages(detail.stages));
-    } else {
-      setCfg(DEFAULT_CONFIG);
+    let cancelled = false;
+    (async () => {
+      const stepKeys: Array<keyof RunConfig | string> = [
+        "sourceId", "chunkStrategy", "chunkMaxChars", "chunkOverlap", "chunkLabel",
+        "exampleTypes", "providerId", "aiLabels", "aiLimit", "reviewRequired", "reviewPerType",
+      ];
+      void stepKeys;
+      try {
+        const [input, prep, outs, proc, cur] = await Promise.all([
+          api.getStepConfig("input"), api.getStepConfig("preprocessing"),
+          api.getStepConfig("output_settings"), api.getStepConfig("processing"),
+          api.getStepConfig("curation"),
+        ]);
+        if (cancelled) return;
+        const merged: RunConfig = { ...DEFAULT_CONFIG };
+        const fileDefaults = {
+          ...(input ?? {}),
+          ...(outs ?? {}),
+          ...(proc ?? {}),
+          ...(cur ?? {}),
+          ...((prep as Record<string, unknown>) ?? {}),
+        } as Record<string, unknown>;
+        if (fileDefaults.source_id) merged.sourceId = String(fileDefaults.source_id);
+        if (fileDefaults.useChunk !== undefined) merged.useChunk = Boolean(fileDefaults.useChunk);
+        if (fileDefaults.strategy) merged.chunkStrategy = String(fileDefaults.strategy);
+        if (fileDefaults.max_chars !== undefined) merged.chunkMaxChars = Number(fileDefaults.max_chars);
+        if (fileDefaults.overlap !== undefined) merged.chunkOverlap = Number(fileDefaults.overlap);
+        if (fileDefaults.label) merged.chunkLabel = String(fileDefaults.label);
+        if (Array.isArray(fileDefaults.example_types) && (fileDefaults.example_types as string[]).length) {
+          merged.exampleTypes = fileDefaults.example_types as string[];
+        }
+        if (fileDefaults.provider_id) merged.providerId = String(fileDefaults.provider_id);
+        if (fileDefaults.instruction) merged.instruction = String(fileDefaults.instruction);
+        if (fileDefaults.labels) merged.aiLabels = Array.isArray(fileDefaults.labels) ? (fileDefaults.labels as string[]).join(", ") : String(fileDefaults.labels);
+        if (fileDefaults.limit !== undefined) merged.aiLimit = Number(fileDefaults.limit);
+        if (fileDefaults.review_required !== undefined) merged.reviewRequired = Boolean(fileDefaults.review_required);
+        if (fileDefaults.review_per_type !== undefined) merged.reviewPerType = Boolean(fileDefaults.review_per_type);
+        if (!detail || !Array.isArray(detail.stages)) {
+          setCfg(merged);
+        } else {
+          setCfg({ ...merged, ...configFromStages(detail.stages) });
+        }
+      } catch {
+        if (!detail || !Array.isArray(detail.stages)) setCfg(DEFAULT_CONFIG);
+        else setCfg(configFromStages(detail.stages));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id]);
+
+  // Auto-save: whenever the user edits a section, the belonging step config
+  // file is PUT with the snake_case version of those fields (the UI never
+  // blocks on this — it just writes through).
+  const persistStep = useCallback((step: string, payload: Record<string, unknown>) => {
+    if (stepLoadTimer.current) window.clearTimeout(stepLoadTimer.current);
+    stepLoadTimer.current = window.setTimeout(() => {
+      api.putStepConfig(step, payload).catch(() => {});
+    }, 400);
+  }, []);
+
+  const updateAndPersist = <K extends keyof RunConfig>(key: K, value: RunConfig[K]) => {
+    set(key, value);
+    const mapping: Partial<Record<keyof RunConfig, string>> = {
+      sourceId: "input",
+      useChunk: "preprocessing",
+      chunkStrategy: "preprocessing",
+      chunkMaxChars: "preprocessing",
+      chunkOverlap: "preprocessing",
+      chunkLabel: "preprocessing",
+      exampleTypes: "output_settings",
+      providerId: "processing",
+      instruction: "processing",
+      aiLabels: "processing",
+      aiLimit: "processing",
+      reviewRequired: "curation",
+      reviewPerType: "curation",
+    };
+    const step = mapping[key];
+    if (!step) return;
+    const snake: Record<string, unknown> = {};
+    if (key === "sourceId") snake.source_id = value;
+    if (key === "useChunk") snake.useChunk = value;
+    if (key === "chunkStrategy") snake.strategy = value;
+    if (key === "chunkMaxChars") snake.max_chars = value;
+    if (key === "chunkOverlap") snake.overlap = value;
+    if (key === "chunkLabel") snake.label = value;
+    if (key === "exampleTypes") snake.example_types = value;
+    if (key === "providerId") snake.provider_id = value;
+    if (key === "instruction") snake.instruction = value;
+    if (key === "aiLabels") snake.labels = value;
+    if (key === "aiLimit") snake.limit = value;
+    if (key === "reviewRequired") snake.review_required = value;
+    if (key === "reviewPerType") snake.review_per_type = value;
+    if (key === "useChunk" || key === "chunkStrategy") {
+      persistStep("preprocessing", {
+        useChunk: key === "useChunk" ? value : cfg.useChunk,
+        strategy: key === "chunkStrategy" ? value : cfg.chunkStrategy,
+      });
+    } else if (step) {
+      persistStep(step, snake);
     }
-  }, [detail]);
+  };
+
+  const createSampleCase = async () => {
+    setBusy(true);
+    try {
+      const sample = {
+        name: "beispiel-case-testlabor.json",
+        content: JSON.stringify({
+          entities: {
+            "messgerät": { bfo_class: "Material Entity", examples: ["Thermometer Typ K im Labor 3", "Kalibriertes Multimeter auf Werkbank 2"], negative_examples: ["die Idee eines Messgeräts"], contrastive_examples: ["Das Demogerät ist ausgeschaltet, bleibt aber ein Messgerät"] },
+            "kalibrierung": { bfo_class: "Process", examples: ["Jährliche Kalibrierung des Multimeters", "Kalibrierung vor jedem Einsatz"], negative_examples: ["die Kalibrier-Erinnerung im Kalender"], contrastive_examples: ["Eine geplante, aber noch nicht durchgeführte Kalibrierung"] },
+          },
+          relations: {
+            "misst": { relation_name: "misst", edge_relation_type: "measures", examples: ["das Multimeter misst Spannung", "Thermometer misst Temperatur im Labor"] },
+          },
+        }, null, 2),
+      };
+      const doc = await api.createSource(sample.name, sample.content);
+      setSources((prev) => [doc as never, ...prev]);
+      updateAndPersist("sourceId", doc.id);
+      setResult("Beispiel-Quelle angelegt und vorausgewählt.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const createRun = async () => {
     if (!newRunName.trim()) return;
@@ -429,7 +560,7 @@ export default function DataRuns() {
                 <select
                   className="select"
                   value={cfg.sourceId}
-                  onChange={(e) => set("sourceId", e.target.value)}
+                  onChange={(e) => updateAndPersist("sourceId", e.target.value)}
                   aria-label="Datenquelle"
                   style={{ width: 320 }}
                 >
@@ -443,6 +574,18 @@ export default function DataRuns() {
                 <Link className="button" to="/training-data">
                   Quellen verwalten…
                 </Link>
+              </div>
+              <div className="field-row" style={{ marginTop: 8, flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <button
+                  className="button"
+                  onClick={() => void createSampleCase()}
+                >
+                  Beispiel-Quelle anlegen
+                </button>
+                <span className="stat-label">
+                  Legt eine strukturierte Beispieldatei an und wählt sie aus — zum
+                  Ausprobieren der kompletten Pipeline.
+                </span>
               </div>
               {!cfg.sourceId && (
                 <p className="stat-label" style={{ marginTop: 6 }}>
@@ -459,12 +602,12 @@ export default function DataRuns() {
                   <input
                     type="checkbox"
                     checked={cfg.useChunk}
-                    onChange={(e) => set("useChunk", e.target.checked)}
+                    onChange={(e) => updateAndPersist("useChunk", e.target.checked)}
                     style={{ marginRight: 6 }}
                   />
                   Chunking aktiv
                 </label>
-                <select className="select" value={cfg.chunkStrategy} onChange={(e) => set("chunkStrategy", e.target.value)} disabled={!cfg.useChunk} aria-label="Strategie">
+                <select className="select" value={cfg.chunkStrategy} onChange={(e) => updateAndPersist("chunkStrategy", e.target.value)} disabled={!cfg.useChunk} aria-label="Strategie">
                   <option value="paragraph">Absatz (Satzgrenzen-Blöcke)</option>
                   <option value="sentence">Einzelne Sätze</option>
                   <option value="window">Gleitendes Fenster</option>
@@ -476,7 +619,7 @@ export default function DataRuns() {
                     type="number"
                     min={40}
                     value={cfg.chunkMaxChars}
-                    onChange={(e) => set("chunkMaxChars", Number(e.target.value))}
+                    onChange={(e) => updateAndPersist("chunkMaxChars", Number(e.target.value))}
                     disabled={!cfg.useChunk}
                     style={{ width: 80, marginLeft: 6 }}
                   />
@@ -488,7 +631,7 @@ export default function DataRuns() {
                     type="number"
                     min={0}
                     value={cfg.chunkOverlap}
-                    onChange={(e) => set("chunkOverlap", Number(e.target.value))}
+                    onChange={(e) => updateAndPersist("chunkOverlap", Number(e.target.value))}
                     disabled={!cfg.useChunk || cfg.chunkStrategy !== "window"}
                     style={{ width: 70, marginLeft: 6 }}
                   />
@@ -499,7 +642,7 @@ export default function DataRuns() {
                     className="input"
                     placeholder="kebab-case"
                     value={cfg.chunkLabel}
-                    onChange={(e) => set("chunkLabel", e.target.value)}
+                    onChange={(e) => updateAndPersist("chunkLabel", e.target.value)}
                     disabled={!cfg.useChunk}
                     style={{ width: 160, marginLeft: 6, fontFamily: "var(--font-mono)" }}
                   />
@@ -544,7 +687,7 @@ export default function DataRuns() {
           {sectionCard("4", "Data Processing (KI / Modell)", "pipeline.processing", (
             <>
               <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
-                <select className="select" value={cfg.providerId} onChange={(e) => set("providerId", e.target.value)} aria-label="Modell/Provider" style={{ width: 300 }}>
+                <select className="select" value={cfg.providerId} onChange={(e) => updateAndPersist("providerId", e.target.value)} aria-label="Modell/Provider" style={{ width: 300 }}>
                   <option value="">— kein LLM (nur Import) —</option>
                   {providers.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -559,7 +702,7 @@ export default function DataRuns() {
                     type="number"
                     min={0}
                     value={cfg.aiLimit}
-                    onChange={(e) => set("aiLimit", Number(e.target.value))}
+                    onChange={(e) => updateAndPersist("aiLimit", Number(e.target.value))}
                     disabled={!cfg.providerId}
                     style={{ width: 90, marginLeft: 6 }}
                   />
@@ -572,7 +715,7 @@ export default function DataRuns() {
                 <textarea
                   className="input"
                   value={cfg.instruction || DEFAULT_PROMPT}
-                  onChange={(e) => set("instruction", e.target.value)}
+                  onChange={(e) => updateAndPersist("instruction", e.target.value)}
                   disabled={!cfg.providerId}
                   placeholder={DEFAULT_PROMPT}
                   style={{ width: "100%", minHeight: 110, fontFamily: "var(--font-mono)", fontSize: 12, marginTop: 4 }}
@@ -582,13 +725,13 @@ export default function DataRuns() {
                     className="input"
                     placeholder="Erlaubte Labels (Komma-getrennt, leer = aus Datensatz)"
                     value={cfg.aiLabels}
-                    onChange={(e) => set("aiLabels", e.target.value)}
+                    onChange={(e) => updateAndPersist("aiLabels", e.target.value)}
                     disabled={!cfg.providerId}
                     style={{ width: 320 }}
                   />
                   <button
                     className="button button-ghost"
-                    onClick={() => set("instruction", "")}
+                    onClick={() => updateAndPersist("instruction", "")}
                     title="Prompt-Vorlage auf Standard zurücksetzen"
                   >
                     Vorlage zurücksetzen
@@ -605,7 +748,7 @@ export default function DataRuns() {
                   <input
                     type="checkbox"
                     checked={cfg.reviewRequired}
-                    onChange={(e) => set("reviewRequired", e.target.checked)}
+                    onChange={(e) => updateAndPersist("reviewRequired", e.target.checked)}
                   />
                   Menschliche Sichtung erforderlich
                 </label>
@@ -613,7 +756,7 @@ export default function DataRuns() {
                   <input
                     type="checkbox"
                     checked={cfg.reviewPerType}
-                    onChange={(e) => set("reviewPerType", e.target.checked)}
+                    onChange={(e) => updateAndPersist("reviewPerType", e.target.checked)}
                     disabled={!cfg.reviewRequired}
                   />
                   Sichtung einzelnd nach Typ (nicht als Sammelstapel)

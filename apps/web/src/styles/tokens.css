@@ -9,12 +9,12 @@
   --color-bg: #f6f7f9;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-border: #dde1e6;
-  --color-border-strong: #c2c9d2;
+  --color-border: #c9cfd8;
+  --color-border-strong: #9aa4b2;
 
-  --color-text: #1a212b;
-  --color-text-muted: #5b6675;
-  --color-text-faint: #8b95a3;
+  --color-text: #161b22;
+  --color-text-muted: #48515e;
+  --color-text-faint: #5f6a78;
   --color-text-invert: #ffffff;
 
   --color-accent: #3b5bdb;
@@ -51,12 +51,12 @@
   --font-mono:
     ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  --text-xs: 11px;
-  --text-sm: 13px;
-  --text-md: 14px;
-  --text-lg: 17px;
-  --text-xl: 21px;
-  --text-2xl: 27px;
+  --text-xs: 12.5px;
+  --text-sm: 14.5px;
+  --text-md: 16px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --text-2xl: 30px;
 
   --leading-tight: 1.25;
   --leading-normal: 1.5;
