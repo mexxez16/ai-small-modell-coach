@@ -103,6 +103,7 @@ use utoipa::OpenApi;
         routes::dataruns::update_data_run,
         routes::dataruns::delete_data_run,
         routes::dataruns::execute_data_run,
+        routes::api::fs_list,
 
         routes::workers::spawn_worker,
 
@@ -308,6 +309,7 @@ fn build_router(state: AppState) -> Router {
                 .delete(routes::dataruns::delete_data_run),
         )
         .route("/api/data-runs/{id}/execute", post(routes::dataruns::execute_data_run))
+        .route("/api/fs/list", get(routes::api::fs_list))
 
         .route("/api/vibe/capabilities", get(routes::vibe::capabilities))
 

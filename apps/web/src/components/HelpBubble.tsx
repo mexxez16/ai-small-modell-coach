@@ -68,8 +68,43 @@ export const helpTexts: Record<string, HelpEntry> = {
   },
   "data-runs.pipeline": {
     title: "Was ist ein Data-Run?",
-    body: "Ein Data-Run ist eine frei konfigurierbare Pipeline: Stages laufen in fester Reihenfolge — ssot_import (strukturierter JSON-Import mit Entities/Relations → Examples/Negatives/Contrastives/Tripel), chunk (Text in Chunks zerlegen), ai_annotate (KI klassifiziert Items als Entwurf, nichts wird auto-approved) und export (per-Head-JSONL-Artefakte). Jede Ausführung schreibt Kennzahlen und übersprungene Datensätze ins Run-Ergebnis.",
-    example: "ssot_import → chunk → ai_annotate → export\nAusführen erzeugt ein Dataset, das im Finetuning-Run als Dataset wählbar ist.",
+    body: "Ein Data-Run ist eine frei konfigurierbare Pipeline in sechs Abschnitten: (1) Datenquelle, (2) Vorverarbeitung wie Chunking, (3) gewünschte Beispiel-Typen, (4) KI-Verarbeitung mit bearbeitbarem Prompt, (5) optionaler menschlicher Check, (6) Ausgabe mit Tabellen und Kennzahlen. Jede Ausführung schreibt Kennzahlen und übersprungene Datensätze ins Run-Ergebnis.",
+    example: "SSOT-Datei → Absatz-Chunking → KI-Annotation → Review → JSONL/Dataset fürs Finetuning",
+  },
+  "pipeline.input": {
+    title: "Datenquelle wählen",
+    body: "Die Quelle ist ein hochgeladenes Dokument. SSOT-JSON mit 'entities' und 'relations' wird strukturiert zerlegt; andere Texte brauchen das Chunking aus Abschnitt 2. Quellen entstehen im Workbench-Bereich über Datei-Upload oder direktes Einfügen.",
+    example: 'entities: {"Begriff": {examples: [...], negative_examples: [...]}}',
+  },
+  "pipeline.preprocessing": {
+    title: "Vorverarbeitung (Chunking)",
+    body: "Der deterministische Chunker zerlegt Text reproduzierbar: Absätze bewahren thematische Blöcke, Einzelzätze sind ideal für Textklassifikation, das Fenster schneidet feste Blöcke mit Überlappung. Kein LLM nötig — kostenlos und nachvollziehbar.",
+    example: "max_chars=600, overlap=50 → ≤600-Zeichen-Chunks mit 50 Zeichen Überlappung",
+  },
+  "pipeline.output_settings": {
+    title: "Beispiel-Typen",
+    body: "Welche Typen am Ende exportiert werden: examples (normale Klassifikationsbeispiele), negative (bewusst falsche/keine-Entität), contrastive (Grenzfälle zum Vergleich) und Tripel-Paare (Subjekt—Prädikat—Objekt) für Relations-Extraktion. Die Wahl steuert die Export-Heads gleichermaßen.",
+    example: "type.head.jsonl · relevance.head.jsonl · relation.head.jsonl",
+  },
+  "pipeline.processing": {
+    title: "KI-Verarbeitung & Prompt",
+    body: "Jeder konfigurierte Provider (Mistral API, Ollama, LM Studio …) kann hier die Items klassifizieren. Der Prompt ist voll editierbar: {labels} und {text} sind Platzhalter für die Label-Liste bzw. den Item-Text. Ergebnisse landen immer als Entwurf.",
+    example: '{"label": "material-entity", "reasoning": "..."}',
+  },
+  "pipeline.prompt": {
+    title: "Prompt-Platzhalter",
+    body: "{labels} wird durch die erlaubten Labels ersetzt, {text} durch den Item-Text. Wenn du die Vorlage leer lässt, gilt der eingebaute Standard-Prompt (Label + kurze Begründung als JSON).",
+    example: "Erlaubte Labels:\n{labels}\n\nText:\n{text}",
+  },
+  "pipeline.curation": {
+    title: "Human Check",
+    body: "Wenn aktiv, bleiben alle KI-Antworten im Status raw und müssen gesichtet werden (raw → curated → approved, oder rejected). „Einzeln nach Typ“ gruppiert den Review-Stapel nach Beispiel-Typ, statt alles gemischt zu zeigen.",
+    example: "raw → curated → approved\n             ↘ rejected",
+  },
+  "pipeline.output": {
+    title: "Ausgabe eines Runs",
+    body: "Nach der Ausführung findest du hier je Stage die Kennzahlen (hinzugefügt, übersprungen, Klassen) und Links: JSONL-Export und Workbench zur Sichtung der erzeugten Items. Das Dataset taucht danach als wählbarer Datensatz in Finetuning-Runs auf.",
+    example: "stage_0_ssot_import: added=42 · stage_3_export: heads=3",
   },
 };
 

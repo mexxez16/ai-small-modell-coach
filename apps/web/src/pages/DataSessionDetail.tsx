@@ -17,6 +17,8 @@ export default function DataSessionDetail() {
   const [session, setSession] = useState<DataSession | null>(null);
   const [runs, setRuns] = useState<DataRun[]>([]);
   const [runName, setRunName] = useState("");
+  const [assignId, setAssignId] = useState("");
+  const [orphans, setOrphans] = useState<DataRun[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -30,6 +32,9 @@ export default function DataSessionDetail() {
       setSession(s);
       setRuns(r);
       setError(null);
+      // Alle weiteren Runs (jede Session) können hier zugeordnet werden.
+      const all = await api.listDataRuns();
+      setOrphans(all.filter((x) => x.id && x.session_id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -105,6 +110,43 @@ export default function DataSessionDetail() {
             onClick={() => void createRun("empty")}
           >
             Leeren Run anlegen
+          </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3>Bestehenden Run zuordnen</h3>
+        <div className="field-row" style={{ flexWrap: "wrap", gap: 8 }}>
+          <select
+            className="select"
+            value={assignId}
+            onChange={(e) => setAssignId(e.target.value)}
+            aria-label="Bestehenden Run auswählen"
+            style={{ width: 320 }}
+          >
+            <option value="">— Run auswählen —</option>
+            {orphans.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="button button-primary"
+            disabled={!assignId || busy}
+            onClick={async () => {
+              if (!assignId) return;
+              setBusy(true);
+              try {
+                await api.updateDataRun(assignId, { session_id: id });
+                setAssignId("");
+                await refresh();
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Zuordnen
           </button>
         </div>
       </div>

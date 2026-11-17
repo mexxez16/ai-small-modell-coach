@@ -1988,3 +1988,49 @@ pub async fn update_dataset_tags(
     dataset.tags = tags;
     Ok(Json(state.storage.update_dataset(dataset)?))
 }
+
+/// Filesystem listing for path pickers (`GET /api/fs/list?path=...`):
+/// read-only directory listing with entries flagged dir/file. Used by the
+/// UI so folder paths (models, sources) can be picked instead of typed.
+#[utoipa::path(get, path = "/api/fs/list", params(("path" = Option<String>, Query)))]
+pub async fn fs_list(
+    State(_state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let path = params.get("path").cloned().unwrap_or_else(|| ".".into());
+    let dir = if path.ends_with('/') { path.clone() } else { format!("{path}/") };
+    let target = if std::path::Path::new(&path).is_absolute() {
+        std::path::PathBuf::from(&path)
+    } else {
+        let cwd = std::env::current_dir().map_err(|e| coach_core::CoreError::Io(e))?;
+        cwd.join(&path)
+    };
+    let parent = target.parent().map(|p| p.to_path_buf());
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    for entry in std::fs::read_dir(&target)
+        .map_err(|e| coach_core::CoreError::Io(e))?
+    {
+        let entry = entry.map_err(|e| coach_core::CoreError::Io(e))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        entries.push(json!({
+            "name": name,
+            "path": entry.path().to_string_lossy(),
+            "dir": is_dir,
+        }));
+    }
+    entries.sort_by(|a, b| {
+        let ad = a.get("dir").and_then(|v| v.as_bool()).unwrap_or(false);
+        let bd = b.get("dir").and_then(|v| v.as_bool()).unwrap_or(false);
+        bd.cmp(&ad).then_with(|| {
+            a.get("name")
+                .and_then(|v| v.as_str())
+                .cmp(&b.get("name").and_then(|v| v.as_str()))
+        })
+    });
+    Ok(Json(json!({
+        "path": dir,
+        "parent": parent.map(|p| p.to_string_lossy().to_string()),
+        "entries": entries,
+    })))
+}

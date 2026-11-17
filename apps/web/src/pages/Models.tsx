@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ModelEntry } from "../api/client";
 import HelpBubble from "../components/HelpBubble";
+import FsBrowser from "../components/FsBrowser";
 
 type CatalogRow = {
   id: string;
@@ -24,6 +25,7 @@ export default function ModelsPage() {
   const [newName, setNewName] = useState("");
   const [newPath, setNewPath] = useState("");
   const [newKind, setNewKind] = useState("local");
+  const [browsing, setBrowsing] = useState(false);
 
   const refresh = async () => {
     try {
@@ -121,6 +123,9 @@ export default function ModelsPage() {
             <option value="shipped">Installiert (spaCy Hub)</option>
             <option value="finetuned">Feingetunt</option>
           </select>
+          <button className="button" onClick={() => setBrowsing(true)} title="Pfad im Dateisystem wählen">
+            Durchsuchen…
+          </button>
           <button
             className="button button-primary"
             disabled={!newName.trim() || !newPath.trim()}
@@ -128,6 +133,15 @@ export default function ModelsPage() {
           >
             Hinzufügen
           </button>
+          <FsBrowser
+            open={browsing}
+            pick="dir"
+            onPick={(p) => {
+              setNewPath(p);
+              if (!newName.trim()) setNewName(p.split("/").filter(Boolean).pop() ?? p);
+            }}
+            onClose={() => setBrowsing(false)}
+          />
         </div>
         <p className="stat-label" style={{ marginTop: 8 }}>
           Modellordner öffnen: Der Pfad steht in der Tabelle unten — kopiere ihn
