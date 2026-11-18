@@ -498,15 +498,10 @@ pub async fn assistant_turn(
         Some(provider) => provider,
         None => {
             return Err(ApiError(coach_core::CoreError::NotFound(
-                "no usable OpenAI-compatible provider (set a default in Settings)".into(),
+                "no usable provider configured (set a default in Settings)".into(),
             )));
         }
     };
-    if provider.kind != ProviderKind::OpenAiCompatible {
-        return Err(ApiError(coach_core::CoreError::InvalidQuery(
-            "assistant requires an OpenAI-compatible provider (vibe CLI cannot do the JSON protocol)".into(),
-        )));
-    }
     let profile = read_profiles()
         .into_iter()
         .find(|p| p.id == body.profile_id)
@@ -538,26 +533,14 @@ pub async fn assistant_turn(
 /// setting → first OpenAI-compatible provider.
 fn resolve_provider(state: &AppState, provider_id: &str) -> Option<crate::providers::Provider> {
     if !provider_id.trim().is_empty() {
-        if let Some(provider) = state.provider_store.get(provider_id) {
-            if provider.kind == ProviderKind::OpenAiCompatible {
-                return Some(provider);
-            }
-            return None;
-        }
-        return None;
+        return state.provider_store.get(provider_id);
     }
     if let Some(default_id) = state.provider_store.default_assistant() {
         if let Some(provider) = state.provider_store.get(&default_id) {
-            if provider.kind == ProviderKind::OpenAiCompatible {
-                return Some(provider);
-            }
+            return Some(provider);
         }
     }
-    state
-        .provider_store
-        .list(true)
-        .into_iter()
-        .find(|p| p.kind == ProviderKind::OpenAiCompatible)
+    state.provider_store.list(true).into_iter().next()
 }
 
 /// Full turn: model loop with live NDJSON event emission. Runs detached in a
@@ -783,12 +766,52 @@ async fn run_turn(
     })).await;
 }
 
+/// One model round through the Mistral Vibe CLI (headless, text output).
+/// The conversation is flattened into a transcript; the CLI decides which
+/// backend model actually answers.
+async fn call_vibe_once(
+    state: &AppState,
+    messages: &[Value],
+) -> Result<String, ApiError> {
+    let mut transcript = String::new();
+    for message in messages {
+        let role = message["role"].as_str().unwrap_or("user");
+        let content = message["content"].as_str().unwrap_or("");
+        transcript.push_str(&format!("{}: {}\n\n", role, content));
+    }
+    let dir = state.workspace_dir.clone();
+    let mut command = tokio::process::Command::new(state.vibe_bin());
+    command
+        .arg("-p")
+        .arg(transcript)
+        .arg("--output")
+        .arg("text")
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null());
+    let output = command
+        .output()
+        .await
+        .map_err(|e| ApiError(coach_core::CoreError::Io(e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError(coach_core::CoreError::InvalidQuery(format!(
+            "vibe CLI failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ))));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// One non-streaming chat completion against the given provider.
 async fn call_model_once(
     state: &AppState,
     provider: &crate::providers::Provider,
     messages: &[Value],
 ) -> Result<String, ApiError> {
+    if provider.kind == ProviderKind::Vibe {
+        return call_vibe_once(state, messages).await;
+    }
     let base = provider
         .base_url
         .clone()

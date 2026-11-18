@@ -166,6 +166,11 @@ impl AppState {
             workspace_dir,
         }
     }
+
+    /// Mistral Vibe CLI binary, overridable via COACH_VIBE_BIN.
+    pub fn vibe_bin(&self) -> String {
+        std::env::var("COACH_VIBE_BIN").unwrap_or_else(|_| "vibe".to_string())
+    }
 }
 
 /// Open the durable storage backend for `data_dir`.

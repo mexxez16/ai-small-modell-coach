@@ -72,7 +72,7 @@ export default function ChatDock({
         api.listProviders(),
       ]);
       setProfiles(res.profiles);
-      setCompatibleProviders(provs.providers.filter((p) => p.kind === "openai_compatible").map((p) => ({ id: p.id, name: p.name })));
+      setCompatibleProviders(provs.providers.map((p) => ({ id: p.id, name: p.name })));
       setProfileId((current) => {
         if (current && res.profiles.some((p) => p.id === current)) return current;
         // Fall back to the previous provider-style key, then to `coach`.
