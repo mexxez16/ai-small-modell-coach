@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { api, AssistantProposal, Provider } from "../api/client";
-
-type ChatMessage = { role: "user" | "assistant"; content: string };
+import { api, AssistantProfile, AssistantProposal } from "../api/client";
 
 type DatasetProfile = {
   dataset_id: string;
@@ -22,14 +20,23 @@ type SpacyInfo = {
   error?: string | null;
 };
 
+const KNOWN_TOOLS = [
+  { id: "docs_search", label: "Doku-Suche (docs_search)" },
+  { id: "get_data_profile", label: "Datenprofil (get_data_profile)" },
+  { id: "get_app_status", label: "App-Status (get_app_status)" },
+  { id: "get_run_status", label: "Run-Status (get_run_status)" },
+  { id: "propose_step_config", label: "Step-Config vorschlagen" },
+  { id: "propose_goal", label: "Trainings-Ziel vorschlagen" },
+  { id: "handoff", label: "Weiterleiten (handoff)" },
+];
+
 export default function Assistant() {
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activity, setActivity] = useState<string[]>([]);
+  const [profiles, setProfiles] = useState<AssistantProfile[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, AssistantProfile>>({});
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [defaultProvider, setDefaultProvider] = useState<string | null>(null);
+  const [defaultOptions, setDefaultOptions] = useState<Array<{ id: string; name: string; model: string | null }>>([]);
   const [proposals, setProposals] = useState<AssistantProposal[]>([]);
   const [profile, setProfile] = useState<DatasetProfile[] | null>(null);
   const [spacy, setSpacy] = useState<SpacyInfo | null>(null);
@@ -37,24 +44,24 @@ export default function Assistant() {
   const [docsVersion, setDocsVersion] = useState("v3.8.3");
   const [docQuery, setDocQuery] = useState("");
   const [docHits, setDocHits] = useState<Array<{ file: string; snippet: string }>>([]);
-  const threadRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const [p, pr, prof] = await Promise.all([
-        api.listProviders(),
+      const [p, pr, prof, def] = await Promise.all([
+        api.assistantProfiles(),
         api.assistantProposals(),
         api.assistantDataProfile(),
+        api.getAssistantDefault(),
       ]);
-      setProviders(p.providers.filter((x) => x.kind === "openai_compatible"));
+      setProfiles(p.profiles);
+      setDrafts(Object.fromEntries(p.profiles.map((x) => [x.id, { ...x, allowed_tools: [...x.allowed_tools], starter_prompts: [...x.starter_prompts] }])));
       setProposals(pr.proposals);
       setProfile(prof.datasets);
-      setProviderId((current) => {
-        if (current) return current;
-        const first = p.providers.find((x) => x.kind === "openai_compatible");
-        return first ? first.id : "";
-      });
+      setDefaultProvider(def.default_assistant);
+      setDefaultOptions(def.providers);
+      const st = await api.assistantStatus();
+      setMirrorVersions(st.docs_mirror_versions);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -64,21 +71,43 @@ export default function Assistant() {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [messages]);
+  const draftFor = (id: string) => drafts[id] ?? profiles.find((p) => p.id === id);
+
+  const patchDraft = (id: string, patch: Partial<AssistantProfile>) =>
+    setDrafts((all) => ({ ...all, [id]: { ...(all[id] ?? profiles.find((p) => p.id === id)!), ...patch } }));
+
+  const saveProfile = async (id: string) => {
+    const draft = drafts[id];
+    if (!draft) return;
+    try {
+      setError(null);
+      setSavedNote(null);
+      await api.putAssistantProfile(id, {
+        ...draft,
+        starter_prompts: draft.starter_prompts.filter((line) => line.trim()),
+      });
+      setSavedNote(`Profil ${draft.name} gespeichert.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const saveDefault = async (id: string | null) => {
+    try {
+      setError(null);
+      await api.setAssistantDefault(id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const probeSpacy = async () => {
-    setSpacy(null);
     try {
-      const info = await api.assistantSpacyStatus();
-      setSpacy(info);
+      setSpacy(await api.assistantSpacyStatus());
     } catch (err) {
-      setSpacy({
-        python: "python3",
-        installed: false,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      setSpacy({ python: "python3", installed: false, error: err instanceof Error ? err.message : String(err) });
     }
   };
 
@@ -86,8 +115,8 @@ export default function Assistant() {
     setError(null);
     try {
       await api.assistantDocsPull(docsVersion.trim());
-      const status = await api.assistantStatus();
-      setMirrorVersions(status.docs_mirror_versions);
+      const st = await api.assistantStatus();
+      setMirrorVersions(st.docs_mirror_versions);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -104,51 +133,6 @@ export default function Assistant() {
     }
   };
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    if (!providerId) {
-      setError("Zuerst einen OpenAI-kompatiblen Provider in den Einstellungen anlegen.");
-      return;
-    }
-    const next = [...messages, { role: "user" as const, content: text }];
-    setMessages(next);
-    setInput("");
-    setBusy(true);
-    setActivity([]);
-    try {
-      setError(null);
-      let finalReply = "";
-      let proposalsQueued = 0;
-      await api.assistantTurn(providerId, next, (event) => {
-        if (event.type === "tool") {
-          setActivity((lines) => [
-            ...lines,
-            `Runde ${event.round}: ${event.tool}${event.query ? ` (${event.query})` : ""} — ${event.ok ? "erledigt" : "fehlgeschlagen"}`,
-          ]);
-        } else if (event.type === "thinking" && event.text.trim()) {
-          setActivity((lines) => [...lines, event.text.trim()]);
-        } else if (event.type === "proposals") {
-          proposalsQueued = event.count;
-        } else if (event.type === "final") {
-          finalReply = event.reply;
-        }
-      });
-      setMessages([
-        ...next,
-        { role: "assistant", content: finalReply || "(leere Antwort)" },
-      ]);
-      setActivity([]);
-      if (proposalsQueued > 0) await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setMessages(next.slice(0, -1));
-      setInput(text);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const decide = async (id: string, accept: boolean) => {
     try {
       if (accept) await api.assistantAcceptProposal(id);
@@ -162,167 +146,122 @@ export default function Assistant() {
   return (
     <div>
       <div className="page-header">
-        <h1>Assistent</h1>
+        <h1>Assistenten</h1>
         <p>
-          Ziel-Berater für Trainingsdaten-Läufe. Der Assistent liest das Trainings-Ziel
-          samt Konfigurationen, fragt nach, wofür die Daten benötigt werden, und
-          schlägt Änderungen als Vorschläge vor — nichts wird ohne deine Bestätigung
-          übernommen.
+          Konfiguration der drei Assistent-Profile, die im Chat-Dock geführt werden:
+          „Small Model Coach“ (Organisator mit Weiterleitung), „Data“ (Trainingsdaten) und
+          „Finetuning“ (Sessions/Runs/Modelle). Nie ändert ein Assistent etwas selbst —
+          Vorschläge landen in der Warteschlange unten.
         </p>
       </div>
 
       {error && <div className="empty-state">{error}</div>}
 
-      <div className="field-row" style={{ marginBottom: 16 }}>
-        <select
-          className="select"
-          value={providerId}
-          onChange={(event) => setProviderId(event.target.value)}
-          aria-label="Berater-Provider"
-        >
-          {providers.length === 0 && <option value="">Kein OpenAI-kompatibler Provider</option>}
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name}
-              {provider.model ? ` · ${provider.model}` : ""}
-            </option>
-          ))}
-        </select>
-        <button className="button button-ghost" onClick={() => void probeSpacy()}>
-          spaCy prüfen
-        </button>
-      </div>
-
-      {spacy && (
-        <p className="stat-label" style={{ marginBottom: 12 }}>
-          spaCy-Umgebung ({spacy.python}):{" "}
-          {spacy.installed
-            ? `installiert, Version ${spacy.spacy_version ?? "?"}, Modelle: ${
-                spacy.installed_models?.join(", ") || "keine"
-              }`
-            : `nicht installiert${spacy.error ? ` (${spacy.error})` : ""} — Beratung ohne spaCy-Grundlage möglich`}
-        </p>
-      )}
-
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ marginTop: 0 }}>Beratung</h3>
-        <div
-          ref={threadRef}
-          style={{
-            maxHeight: 340,
-            overflowY: "auto",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-          }}
-        >
-          {messages.length === 0 && (
-            <p className="stat-label" style={{ margin: 0 }}>
-              Beispiele: „Wofür eignen sich meine Trainingsdaten?“ oder „Erstelle eine
-              Ziel-Konfiguration für eine BFO-Textklassifikation“.
-            </p>
-          )}
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              style={{
-                alignSelf: message.role === "user" ? "flex-end" : "flex-start",
-                maxWidth: "80%",
-                padding: "8px 12px",
-                borderRadius: 10,
-                background:
-                  message.role === "user" ? "var(--surface-alt, rgba(127,127,127,0.15))" : "transparent",
-                border: message.role === "user" ? "1px solid var(--border)" : "none",
-              }}
+        <h3 style={{ marginTop: 0 }}>Modell für die Assistenten</h3>
+        {defaultOptions.length === 0 ? (
+          <p className="stat-label" style={{ margin: 0 }}>
+            Kein OpenAI-kompatibler Provider vorhanden — zuerst in Settings → Chat providers anlegen.
+          </p>
+        ) : (
+          <div className="field-row">
+            <select
+              className="select"
+              value={defaultProvider ?? ""}
+              onChange={(event) => void saveDefault(event.target.value || null)}
+              aria-label="Standard-Provider für Assistenten"
             >
-              {message.content.split("\n").map((line, lineIndex) => (
-                <p key={lineIndex} style={{ margin: lineIndex ? "6px 0 0" : 0 }}>
-                  {line}
-                </p>
+              <option value="">— automatisch (erster Provider) —</option>
+              {defaultOptions.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                  {provider.model ? ` · ${provider.model}` : ""}
+                </option>
               ))}
-            </div>
-          ))}
-          {busy && (
-            <div
-              style={{
-                alignSelf: "flex-start",
-                maxWidth: "80%",
-                borderLeft: "3px solid var(--border-strong, var(--border))",
-                paddingLeft: 10,
-              }}
-            >
-              <p className="stat-label" style={{ margin: 0 }}>Assistent denkt…</p>
-              {activity.map((line, index) => (
-                <p key={index} className="stat-label" style={{ margin: "4px 0 0" }}>{line}</p>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="field-row" style={{ marginTop: 10 }}>
-          <input
-            className="text-input"
-            style={{ flex: 1 }}
-            placeholder="Frage oder Anweisung…"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            aria-label="Nachricht an den Assistenten"
-          />
-          <button className="button button-primary" disabled={busy} onClick={() => void send()}>
-            Senden
-          </button>
-        </div>
+            </select>
+          </div>
+        )}
       </div>
+
+      {profiles.map((profile) => {
+        const draft = draftFor(profile.id)!;
+        return (
+          <div key={profile.id} className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ marginTop: 0 }}>{profile.name}</h3>
+            <p className="stat-label">{profile.description}</p>
+            <div className="field-row">
+              <label className="stat-label" style={{ minWidth: 120 }}>System-Prompt</label>
+              <textarea
+                className="text-input"
+                style={{ flex: 1, minHeight: 90, fontFamily: "var(--font-mono)" }}
+                value={draft.system_prompt}
+                onChange={(event) => patchDraft(profile.id, { system_prompt: event.target.value })}
+                aria-label={`System-Prompt ${profile.name}`}
+              />
+            </div>
+            <div className="field-row">
+              <label className="stat-label" style={{ minWidth: 120 }}>Werkzeuge</label>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {KNOWN_TOOLS.map((tool) => (
+                  <label key={tool.id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={draft.allowed_tools.includes(tool.id)}
+                      onChange={(event) =>
+                        patchDraft(profile.id, {
+                          allowed_tools: event.target.checked
+                            ? [...draft.allowed_tools, tool.id]
+                            : draft.allowed_tools.filter((t) => t !== tool.id),
+                        })
+                      }
+                    />
+                    <span>{tool.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="field-row">
+              <label className="stat-label" style={{ minWidth: 120 }}>Start-Prompts</label>
+              <textarea
+                className="text-input"
+                style={{ flex: 1, minHeight: 70, fontFamily: "var(--font-mono)" }}
+                value={draft.starter_prompts.join("\n")}
+                onChange={(event) => patchDraft(profile.id, { starter_prompts: event.target.value.split("\n") })}
+                aria-label={`Start-Prompts ${profile.name}`}
+                placeholder="Eine Zeile pro Chip"
+              />
+            </div>
+            <div className="field-row">
+              <button className="button button-primary" onClick={() => void saveProfile(profile.id)}>
+                Speichern
+              </button>
+              <button className="button button-ghost" onClick={() => patchDraft(profile.id, { ...profile })}>
+                Zurücksetzen
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {savedNote && <p className="stat-label">{savedNote}</p>}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>Vorschläge ({proposals.length})</h3>
         {proposals.length === 0 && (
-          <p className="stat-label" style={{ margin: 0 }}>
-            Keine offenen Vorschläge.
-          </p>
+          <p className="stat-label" style={{ margin: 0 }}>Keine offenen Vorschläge.</p>
         )}
         {proposals.map((proposal) => (
-          <div
-            key={proposal.id}
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: 12,
-              marginBottom: 10,
-            }}
-          >
+          <div key={proposal.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12, marginBottom: 10 }}>
             <div className="field-row">
               <b>{proposal.summary}</b>
               <span className="stat-label">{new Date(proposal.created_at).toLocaleString()}</span>
               <span className="badge badge-neutral">{proposal.kind}</span>
             </div>
-            <pre
-              style={{
-                fontSize: "var(--text-xs)",
-                background: "var(--surface-alt, rgba(127,127,127,0.1))",
-                padding: 8,
-                borderRadius: 6,
-                overflowX: "auto",
-                maxHeight: 220,
-              }}
-            >
+            <pre style={{ fontSize: "var(--text-xs)", background: "var(--surface-alt, rgba(127,127,127,0.1))", padding: 8, borderRadius: 6, overflowX: "auto", maxHeight: 220 }}>
               {JSON.stringify(proposal.payload, null, 2)}
             </pre>
             <div className="field-row">
-              <button className="button button-primary" onClick={() => void decide(proposal.id, true)}>
-                Annehmen
-              </button>
-              <button className="button" onClick={() => void decide(proposal.id, false)}>
-                Verwerfen
-              </button>
+              <button className="button button-primary" onClick={() => void decide(proposal.id, true)}>Annehmen</button>
+              <button className="button" onClick={() => void decide(proposal.id, false)}>Verwerfen</button>
             </div>
           </div>
         ))}
@@ -336,14 +275,11 @@ export default function Assistant() {
           <div key={dataset.dataset_id} style={{ marginBottom: 12 }}>
             <b>{dataset.name}</b>{" "}
             <span className="stat-label">
-              {dataset.items} Items · ohne Text: {dataset.items_without_text} · Duplikate:{" "}
-              {dataset.duplicate_texts}
+              {dataset.items} Items · ohne Text: {dataset.items_without_text} · Duplikate: {dataset.duplicate_texts}
             </span>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
               {Object.entries(dataset.by_kind).map(([kind, count]) => (
-                <span key={kind} className="badge badge-neutral">
-                  {kind}: {count}
-                </span>
+                <span key={kind} className="badge badge-neutral">{kind}: {count}</span>
               ))}
             </div>
           </div>
@@ -351,11 +287,21 @@ export default function Assistant() {
       </div>
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>spaCy-Doku-Mirror</h3>
+        <h3 style={{ marginTop: 0 }}>spaCy-Umgebung &amp; Doku-Spiegel</h3>
+        <div className="field-row">
+          <button className="button button-ghost" onClick={() => void probeSpacy()}>spaCy prüfen</button>
+        </div>
+        {spacy && (
+          <p className="stat-label" style={{ marginBottom: 12 }}>
+            spaCy-Umgebung ({spacy.python}):{" "}
+            {spacy.installed
+              ? `installiert, Version ${spacy.spacy_version ?? "?"}, Modelle: ${spacy.installed_models?.join(", ") || "keine"}`
+              : `nicht installiert${spacy.error ? ` (${spacy.error})` : ""} — Beratung ohne spaCy-Grundlage möglich`}
+          </p>
+        )}
         <p className="stat-label">
-          Ziehe eine Versionsversion der spaCy-Doku als lokalen Spiegel, damit der
-          Assistent Änderungen nachsehen kann — auch ohne installiertes spaCy.
-          Versionen: {mirrorVersions.length ? mirrorVersions.join(", ") : "keine"}
+          Ziehe eine Doku-Version als lokalen Spiegel, damit die Assistenten Details nachschlagen
+          können — auch ohne installiertes spaCy. Versionen: {mirrorVersions.length ? mirrorVersions.join(", ") : "keine"}
         </p>
         <div className="field-row">
           <input
@@ -365,9 +311,7 @@ export default function Assistant() {
             onChange={(event) => setDocsVersion(event.target.value)}
             aria-label="spaCy-Doku-Version"
           />
-          <button className="button button-primary" onClick={() => void pullDocs()}>
-            Docs spiegeln
-          </button>
+          <button className="button button-primary" onClick={() => void pullDocs()}>Docs spiegeln</button>
         </div>
         <div className="field-row" style={{ marginTop: 8 }}>
           <input

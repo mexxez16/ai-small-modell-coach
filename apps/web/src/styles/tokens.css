@@ -21,6 +21,12 @@
   --color-accent-hover: #3450c4;
   --color-accent-subtle: #e8edfc;
 
+  /* Domain accents — one hue per assistant domain, on the app-wide chart
+     scale. Used for sidebar sections, dock tabs and chat attribution. */
+  --color-domain-coach: #7048e8;
+  --color-domain-data: #0c8599;
+  --color-domain-finetuning: #d9480f;
+
   --color-success: #1c7d43;
   --color-success-subtle: #e2f4e8;
   --color-warning: #946a00;
@@ -84,14 +90,18 @@
   --color-border: #2a3344;
   --color-border-strong: #3c485e;
 
-  --color-text: #e8edf4;
-  --color-text-muted: #9aa6b8;
-  --color-text-faint: #6e7a8e;
+  --color-text: #fbfcfe;
+  --color-text-muted: #c8d1dd;
+  --color-text-faint: #adb8c6;
   --color-text-invert: #10141b;
 
   --color-accent: #7a96f2;
   --color-accent-hover: #8ea5f4;
   --color-accent-subtle: #1f2a4a;
+
+  --color-domain-coach: #b197fc;
+  --color-domain-data: #66d9e8;
+  --color-domain-finetuning: #ffa94d;
 
   --color-success: #4ade80;
   --color-success-subtle: #12291c;

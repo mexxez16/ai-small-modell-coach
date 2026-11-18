@@ -231,3 +231,63 @@ pub async fn set_vibe_model(
         active_model: Some(model),
     }))
 }
+
+/// Default assistant provider — surfaced/edited in Settings; stored in
+/// `providers.json` next to the providers themselves (single source of truth).
+#[derive(Debug, Serialize)]
+pub struct AssistantDefault {
+    pub default_assistant: Option<String>,
+    /// OpenAI-compatible providers available to pick from.
+    pub providers: Vec<serde_json::Value>,
+}
+
+pub async fn get_assistant_default(State(state): State<AppState>) -> Json<AssistantDefault> {
+    let providers = state
+        .provider_store
+        .list(true)
+        .into_iter()
+        .filter(|p| p.kind == crate::providers::ProviderKind::OpenAiCompatible)
+        .map(|p| serde_json::json!({"id": p.id, "name": p.name, "model": p.model}))
+        .collect();
+    Json(AssistantDefault {
+        default_assistant: state.provider_store.default_assistant(),
+        providers,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssistantDefaultBody {
+    #[serde(default)]
+    pub provider_id: Option<String>,
+}
+
+pub async fn set_assistant_default(
+    State(state): State<AppState>,
+    Json(body): Json<AssistantDefaultBody>,
+) -> Result<Json<AssistantDefault>, ApiError> {
+    // Only accept a provider id that actually exists and is usable.
+    if let Some(id) = &body.provider_id {
+        let exists = state
+            .provider_store
+            .get(id)
+            .map(|p| p.kind == crate::providers::ProviderKind::OpenAiCompatible)
+            .unwrap_or(false);
+        if !exists {
+            return Err(coach_core::CoreError::NotFound(format!(
+                "provider {id}"
+            ))
+            .into());
+        }
+    }
+    state.provider_store.set_default_assistant(body.provider_id.clone());
+    Ok(Json(AssistantDefault {
+        default_assistant: state.provider_store.default_assistant(),
+        providers: state
+            .provider_store
+            .list(true)
+            .into_iter()
+            .filter(|p| p.kind == crate::providers::ProviderKind::OpenAiCompatible)
+            .map(|p| serde_json::json!({"id": p.id, "name": p.name, "model": p.model}))
+            .collect(),
+    }))
+}

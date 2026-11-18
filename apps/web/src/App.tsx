@@ -50,10 +50,10 @@ const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: s
     ],
   },
   {
-    section: "Workbench",
+    section: "Settings",
     items: [
-      { to: "/assistant", label: "Assistent" },
-      { to: "/settings", label: "Settings" },
+      { to: "/assistant", label: "Assistenten" },
+      { to: "/settings", label: "General" },
     ],
   },
 ];
@@ -116,11 +116,10 @@ function Sidebar() {
   return (
     <nav className="sidebar" aria-label="Main navigation">
       <div className="sidebar-brand">
-        <span className="sidebar-brand-mark" aria-hidden="true" />
         <span>Small Model Coach</span>
       </div>
       {NAV_SECTIONS.map((group) => (
-        <div key={group.section}>
+        <div key={group.section} data-domain={group.section.toLowerCase()}>
           <div className="sidebar-section">{group.section}</div>
           {group.items.map((item) => (
             <NavLink

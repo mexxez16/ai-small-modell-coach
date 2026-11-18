@@ -31,6 +31,123 @@ const CONTEXT_STEPS: &[&str] = &[
     "curation",
 ];
 
+/// Tools the assistant may invoke (gated per profile).
+const KNOWN_TOOLS: &[&str] = &[
+    "docs_search",
+    "get_data_profile",
+    "get_app_status",
+    "get_run_status",
+    "propose_step_config",
+    "propose_goal",
+    "handoff",
+];
+
+/// One assistant personality, stored in `<data_dir>/assistant/profiles.json`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub starter_prompts: Vec<String>,
+}
+
+fn profiles_path() -> std::path::PathBuf {
+    assistant_dir().join("profiles.json")
+}
+
+/// Read all profiles, seeding the shipped three on first access so the
+/// store never boots empty.
+fn read_profiles() -> Vec<Profile> {
+    if let Ok(bytes) = std::fs::read(profiles_path()) {
+        if let Ok(profiles) = serde_json::from_slice::<Vec<Profile>>(&bytes) {
+            if !profiles.is_empty() {
+                return profiles;
+            }
+        }
+    }
+    let seeded = default_profiles();
+    let _ = ensure_assistant_dir();
+    if let Ok(text) = serde_json::to_string_pretty(&seeded) {
+        let _ = std::fs::write(profiles_path(), text);
+    }
+    seeded
+}
+
+fn ensure_assistant_dir() -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(assistant_dir())?;
+    Ok(assistant_dir())
+}
+
+/// The shipped three personalities; replaced only when the file must be seeded.
+fn default_profiles() -> Vec<Profile> {
+    vec![
+        Profile {
+            id: "coach".into(),
+            name: "Small Model Coach".into(),
+            description: "Organisator: erklärt die App und leitet an die Spezialisten weiter."
+                .into(),
+            system_prompt: "Du bist der Small Model Coach-Assistent: Du kennst die App \
+                 (Overview/Dashboard, Finetuning: Sessions/Runs/Models, Data: Training Data \
+                 Sessions + Runs mit den Assistent-Stufen, Visual Analysis, Workbench mit \
+                 Settings). Du erklärst Zusammenhänge, stellst Fragen, wenn Ziele unklar sind, \
+                 und empfiehlst, welcher Spezialist-Assistent (Data, Finetuning) weiterhelfen \
+                 kann. Du antwortest auf Deutsch, prägnant und konkret."
+                .into(),
+            allowed_tools: vec!["handoff".into(), "get_app_status".into()],
+            starter_prompts: vec![
+                "Wofür ist welcher Assistent zuständig?".into(),
+                "Erkläre mir den Trainingsdaten-Ablauf der App.".into(),
+            ],
+        },
+        Profile {
+            id: "data".into(),
+            name: "Data".into(),
+            description: "Trainingsdaten-Pipelines: Import, Annotation, Kuratierung, Export."
+                .into(),
+            system_prompt: "Du bist der Trainingsdaten-Assistent des AI Small Modell Coach, \
+                 ein Berater (kein Entscheider). Der Nutzer bereitet Trainingsdaten für spaCy \
+                 Komponenten vor (textcat, ner, relation extraction). Antworte auf Deutsch, \
+                 prägnant und konkret."
+                .into(),
+            allowed_tools: vec![
+                "docs_search".into(),
+                "get_data_profile".into(),
+                "get_app_status".into(),
+                "propose_step_config".into(),
+                "propose_goal".into(),
+            ],
+            starter_prompts: vec![
+                "Bewerte mein Datenprofil für eine Textklassifikation.".into(),
+                "Schlage mir ein Trainings-Ziel vor.".into(),
+            ],
+        },
+        Profile {
+            id: "finetuning".into(),
+            name: "Finetuning".into(),
+            description: "Sessions, Runs und Modelle im Überblick.".into(),
+            system_prompt: "Du bist der Fine-Tuning-Assistent: Du erläuterst Sessions, Runs \
+                 und Modellstände der App, liest Status zusammen und gibst Handlungsempfehlungen. \
+                 Antworte auf Deutsch, prägnant und konkret."
+                .into(),
+            allowed_tools: vec![
+                "docs_search".into(),
+                "get_app_status".into(),
+                "get_run_status".into(),
+            ],
+            starter_prompts: vec![
+                "Gib mir einen Überblick über meine Sessions und Runs.".into(),
+                "Welche Modelle sind bereit, was fehlt?".into(),
+            ],
+        },
+    ]
+}
+
+
 /// How many model round-trips one turn may use for the tool loop.
 const MAX_TOOL_ROUNDS: usize = 4;
 
@@ -52,6 +169,47 @@ fn proposals_path() -> std::path::PathBuf {
 
 fn docs_root() -> std::path::PathBuf {
     data_dir().join("docs").join("spacy")
+}
+
+/// `GET /api/assistant/profiles` — all profiles (seeds ensured on first call).
+pub async fn list_profiles(State(_state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let profiles = read_profiles();
+    Ok(Json(json!({ "profiles": profiles })))
+}
+
+/// `PUT /api/assistant/profiles/{id}` — replace one profile; tool names are
+/// validated against the known set so the editor cannot inject anything else.
+pub async fn upsert_profile(
+    State(_state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(mut profile): Json<Profile>,
+) -> Result<Json<Value>, ApiError> {
+    if profile.id != id {
+        return Err(ApiError(coach_core::CoreError::InvalidQuery(format!(
+            "profile id mismatch: body `{}` vs path `{id}`",
+            profile.id
+        ))));
+    }
+    if !KNOWN_TOOLS.contains(&profile.id.as_str())
+        && !["coach", "data", "finetuning"].contains(&profile.id.as_str())
+    {
+        return Err(ApiError(coach_core::CoreError::InvalidQuery(format!(
+            "unknown profile id `{id}`"
+        ))));
+    }
+    profile
+        .allowed_tools
+        .retain(|tool| KNOWN_TOOLS.contains(&tool.as_str()));
+    let mut profiles = read_profiles();
+    match profiles.iter_mut().find(|p| p.id == id) {
+        Some(existing) => *existing = profile.clone(),
+        None => profiles.push(profile.clone()),
+    }
+    ensure_assistant_dir().map_err(coach_core::CoreError::Io)?;
+    let text = serde_json::to_string_pretty(&profiles)
+        .map_err(coach_core::CoreError::Serialization)?;
+    std::fs::write(profiles_path(), text).map_err(coach_core::CoreError::Io)?;
+    Ok(Json(json!({ "profile": profile })))
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +420,32 @@ pub struct Proposal {
     pub payload: Value,
 }
 
+/// Aggregated app status for the coach assistant: sessions, runs and models.
+fn app_status_core(state: &AppState) -> Value {
+    let sessions = state.storage.list_sessions().unwrap_or_default();
+    let runs = state.storage.list_runs(None).unwrap_or_default();
+    let models = state.storage.list_model_entries().unwrap_or_default();
+    json!({
+        "sessions": { "count": sessions.len(),
+            "items": sessions.iter().map(|s| json!({"id": s.id, "name": s.name})).collect::<Vec<_>>() },
+        "runs": { "count": runs.len(),
+            "items": runs.iter().map(|r| json!({"id": r.id, "name": r.name, "status": format!("{:?}", r.status), "model": r.model})).collect::<Vec<_>>() },
+        "models": { "count": models.len(),
+            "items": models.iter().map(|m| json!({"id": m.id, "name": m.name, "kind": m.kind, "path": m.path})).collect::<Vec<_>>() },
+    })
+}
+
+/// Run status for the finetuning assistant: sessions + their runs.
+fn run_status_core(state: &AppState) -> Value {
+    let sessions = state.storage.list_sessions().unwrap_or_default();
+    let runs = state.storage.list_runs(None).unwrap_or_default();
+    json!({
+        "sessions": sessions.iter().map(|s| json!({"id": s.id, "name": s.name, "status": s.status})).collect::<Vec<_>>(),
+        "runs": runs.iter().map(|r| json!({"id": r.id, "name": r.name, "status": format!("{:?}", r.status), "model": r.model, "dataset_id": r.dataset_id})).collect::<Vec<_>>(),
+    })
+}
+
+/// Pending proposals, read from `<data_dir>/assistant/proposals.json`.
 fn read_proposals() -> Vec<Proposal> {
     std::fs::read(proposals_path())
         .ok()
@@ -279,20 +463,28 @@ fn write_proposals(all: &[Proposal]) -> Result<(), ApiError> {
 
 #[derive(Debug, Deserialize)]
 pub struct TurnRequest {
-    /// Which provider to query (must exist and be openai_compatible). The
-    /// assistant uses the store's *unmasked* key like the chat dock does.
+    /// Which provider to query. Empty/absent resolves through the
+    /// default-assistant setting (fallback: first openai_compatible).
+    #[serde(default)]
     pub provider_id: String,
+    /// Which assistant profile drives this turn (default: "coach").
+    #[serde(default = "default_profile_id")]
+    pub profile_id: String,
     /// Conversation so far, oldest first, WITHOUT the system prompt
     /// (it is prepended here). Roles: "user" | "assistant".
     pub messages: Vec<Value>,
 }
 
+fn default_profile_id() -> String {
+    "coach".to_string()
+}
+
 /// `POST /api/assistant/turn` — one advising turn, streamed as NDJSON lines:
 /// `round_start` per model call, `tool` per executed read action,
 /// `thinking` with intermediate opportunities to see the reasoning,
-/// `final` with the finished reply. Write actions (`propose_*`) never
-/// execute — they land in the pending-proposal queue and are reported via
-/// a `proposals` event.
+/// `handoff` for the coach's referral card, `final` with the finished
+/// reply. Write actions (`propose_*`) never execute — they land in the
+/// pending-proposal queue and are reported via a `proposals` event.
 pub async fn assistant_turn(
     State(state): State<AppState>,
     Json(body): Json<TurnRequest>,
@@ -302,21 +494,32 @@ pub async fn assistant_turn(
             "messages must not be empty".into(),
         )));
     }
-    let provider = state.provider_store.get(&body.provider_id).ok_or_else(|| {
-        ApiError(coach_core::CoreError::NotFound(format!(
-            "provider {}",
-            body.provider_id
-        )))
-    })?;
+    let provider = match resolve_provider(&state, &body.provider_id) {
+        Some(provider) => provider,
+        None => {
+            return Err(ApiError(coach_core::CoreError::NotFound(
+                "no usable OpenAI-compatible provider (set a default in Settings)".into(),
+            )));
+        }
+    };
     if provider.kind != ProviderKind::OpenAiCompatible {
         return Err(ApiError(coach_core::CoreError::InvalidQuery(
             "assistant requires an OpenAI-compatible provider (vibe CLI cannot do the JSON protocol)".into(),
         )));
     }
+    let profile = read_profiles()
+        .into_iter()
+        .find(|p| p.id == body.profile_id)
+        .ok_or_else(|| {
+            ApiError(coach_core::CoreError::NotFound(format!(
+                "profile {}",
+                body.profile_id
+            )))
+        })?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(8);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Value>(8);
     tokio::spawn(async move {
-        run_turn(&state, &provider, body.messages, &tx).await;
+        run_turn(&state, &provider, &profile, body.messages, &tx).await;
     });
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
@@ -331,11 +534,38 @@ pub async fn assistant_turn(
         .expect("static response builder"))
 }
 
+/// Provider resolution for the assistant: explicit id → default-assistant
+/// setting → first OpenAI-compatible provider.
+fn resolve_provider(state: &AppState, provider_id: &str) -> Option<crate::providers::Provider> {
+    if !provider_id.trim().is_empty() {
+        if let Some(provider) = state.provider_store.get(provider_id) {
+            if provider.kind == ProviderKind::OpenAiCompatible {
+                return Some(provider);
+            }
+            return None;
+        }
+        return None;
+    }
+    if let Some(default_id) = state.provider_store.default_assistant() {
+        if let Some(provider) = state.provider_store.get(&default_id) {
+            if provider.kind == ProviderKind::OpenAiCompatible {
+                return Some(provider);
+            }
+        }
+    }
+    state
+        .provider_store
+        .list(true)
+        .into_iter()
+        .find(|p| p.kind == ProviderKind::OpenAiCompatible)
+}
+
 /// Full turn: model loop with live NDJSON event emission. Runs detached in a
 /// spawned task; ending events (`final`/`error`) close the channel.
 async fn run_turn(
     state: &AppState,
     provider: &crate::providers::Provider,
+    profile: &Profile,
     user_messages: Vec<Value>,
     tx: &tokio::sync::mpsc::Sender<Value>,
 ) {
@@ -348,7 +578,7 @@ async fn run_turn(
     };
 
     let mut convo: Vec<Value> =
-        vec![json!({"role": "system", "content": build_system_prompt(state)})];
+        vec![json!({"role": "system", "content": build_system_prompt(state, profile)})];
     convo.extend(user_messages.iter().cloned());
 
     let mut all = read_proposals();
@@ -366,6 +596,16 @@ async fn run_turn(
             }
         };
         let (text, actions) = parse_protocol(&raw_text);
+        // Tool gate: only actions the profile allows survive.
+        let actions: Vec<Value> = actions
+            .into_iter()
+            .filter(|action| {
+                action["tool"]
+                    .as_str()
+                    .map(|tool| profile.allowed_tools.iter().any(|allowed| allowed == tool))
+                    .unwrap_or(false)
+            })
+            .collect();
 
         // 1) Write actions: become proposals, nothing else.
         let mut has_writes = false;
@@ -440,6 +680,56 @@ async fn run_turn(
                     })).await;
                     results.push(json!({"tool": "get_data_profile", "ok": ok, "result": value}));
                 }
+                Some("get_app_status") => {
+                    let status = app_status_core(state);
+                    tool_trace.push(json!({
+                        "round": round + 1,
+                        "tool": "get_app_status",
+                        "ok": true,
+                    }));
+                    send(tx, json!({
+                        "type": "tool",
+                        "round": round + 1,
+                        "tool": "get_app_status",
+                        "ok": true,
+                    })).await;
+                    results.push(json!({"tool": "get_app_status", "ok": true, "result": status}));
+                }
+                Some("get_run_status") => {
+                    let status = run_status_core(state);
+                    tool_trace.push(json!({
+                        "round": round + 1,
+                        "tool": "get_run_status",
+                        "ok": true,
+                    }));
+                    send(tx, json!({
+                        "type": "tool",
+                        "round": round + 1,
+                        "tool": "get_run_status",
+                        "ok": true,
+                    })).await;
+                    results.push(json!({"tool": "get_run_status", "ok": true, "result": status}));
+                }
+                // The coach's referral: emitted as a card event for the dock,
+                // never fed back into the model (the turn ends after this
+                // round without further tool results).
+                Some("handoff") => {
+                    let target = action["profile"].as_str().unwrap_or("");
+                    if target == "data" || target == "finetuning" {
+                        tool_trace.push(json!({
+                            "round": round + 1,
+                            "tool": "handoff",
+                            "profile": target,
+                            "ok": true,
+                        }));
+                        send(tx, json!({
+                            "type": "handoff",
+                            "profile": target,
+                            "reason": action["reason"].as_str().unwrap_or(""),
+                            "opening": action["opening"].as_str().unwrap_or(""),
+                        })).await;
+                    }
+                }
                 _ => {}
             }
         }
@@ -474,10 +764,10 @@ async fn run_turn(
 
     if !queued.is_empty() {
         send(tx, json!({"type": "proposals", "count": queued.len()})).await;
-    if let Err(err) = write_proposals(&all) {
-        send(tx, json!({"type": "error", "message": err.0.to_string()})).await;
-        return;
-    }
+        if let Err(err) = write_proposals(&all) {
+            send(tx, json!({"type": "error", "message": err.0.to_string()})).await;
+            return;
+        }
     }
 
     let reply = if final_reply.is_empty() {
@@ -594,75 +884,80 @@ fn truncate_chars(text: &str, max: usize) -> String {
     }
 }
 
-/// The system prompt: role, guard rails, JSON protocol and the CURRENT
-/// context (goal, step configs, docs mirror versions). Rebuilt every turn so
-/// edits from the workbench are visible to the next answer immediately.
-fn build_system_prompt(state: &AppState) -> String {
+/// The system prompt: profile role, JSON protocol rules and the CURRENT
+/// context, gated per the profile's tools. Rebuilt every turn so edits from
+/// the workbench are visible to the next answer immediately.
+fn build_system_prompt(state: &AppState, profile: &Profile) -> String {
     let mut parts: Vec<String> = Vec::new();
+    parts.push(profile.system_prompt.clone());
+    // Protocol rules (profile prompt comes first — rules stay fixed).
     parts.push(
-        "Du bist der Trainingsdaten-Assistent des AI Small Modell Coach, ein Berater \
-         (kein Entscheider). Der Nutzer hat Trainingsdaten-Pipelines vorbereitet und \
-         will mit spaCy Komponenten trainingieren (z. B. textcat, textcat_multilabel, \
-         ner, relation extraction). Antworte auf Deutsch, prägnant und konkret."
-            .to_string(),
-    );
-    parts.push(
-        "VERHALTEN: (1) Wenn der Zweck der Daten unklar ist, frage gezielt nach \
-         (Ziel-Komponente, Klassenraum, Sprache, Menge). (2) Lies dann die \
-         mitgelieferten Konfigurationen und empfiehl konkrete Änderungen. \
-         (3) Ändere NIEMALS etwas direkt: gib Änderungswünsche als Aktionen \
-         im JSON-Protokoll zurück. (4) Antworte AUSSCHLIESSLICH mit einem \
-         JSON-Objekt: {\"text\": \"<Antwort>\", \"actions\": [...]}. \
-         Für 'actions' gilt: entweder weglassen oder Array mit Einträgen der Form \
-         {\"tool\": \"propose_step_config\", \"step\": \"<input|preprocessing|output_settings|processing|curation>\", \"config\": {...}} \
-         oder {\"tool\": \"propose_goal\", \"goal\": {...}}. \
-         Willst du selbst Daten nachschauen, kannst du statt zu raten \
-         diese LESE-Aktionen benutzen (das System führt sie aus und zeigt dir \
-         die Ergebnisse, danach antwortest du erneut): \
-         {\"tool\": \"docs_search\", \"query\": \"<Text>\"} — durchsucht den lokalen \
-         spaCy-Doku-Spiegel; \
-         {\"tool\": \"get_data_profile\"} — Datenprofil aller Datasets \
-         (Items, Label-Verteilung, ohne-Text, Duplikate). \
-         Regel: Bei Fragen, die sich auf die Beschaffenheit der Trainingsdaten \
-         beziehen (Mengen, Labels, Qualität, Duplikate), rufe zuerst \
-         {\"tool\": \"get_data_profile\"} auf und antworte erst danach."
+        "VERHALTEN: Antworte im JSON-Protokoll \
+         {\"text\": \"<Antwort>\", \"actions\": [...]}; schreibe nie direkt, \
+         sondern nur über Aktionen; bleib in deiner Rolle."
             .to_string(),
     );
 
-    // Current goal (may be missing — that is an important hint itself).
-    match std::fs::read_to_string(goal_path()) {
-        Ok(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(goal) => parts.push(format!("AKTUELLES ZIEL (config/goal.json):\n{}", serde_json::to_string_pretty(&goal).unwrap_or_default())),
-            Err(_) => parts.push("AKTUELLES ZIEL: vorhanden, aber ungültiges JSON.".to_string()),
-        },
-        Err(_) => parts.push("AKTUELLES ZIEL: noch nicht gesetzt (config/goal.json fehlt) — bitte den Nutzer zuerst nach Zweck, Komponente und Klassenraum fragen.".to_string()),
+    // Action catalog only for the tools the profile actually has.
+    let mut actions_docs: Vec<String> = Vec::new();
+    for tool in &profile.allowed_tools {
+        let doc = match tool.as_str() {
+            "docs_search" => "{\"tool\": \"docs_search\", \"query\": \"<Text>\"} — durchsucht den lokalen spaCy-Doku-Spiegel;",
+            "get_data_profile" => "{\"tool\": \"get_data_profile\"} — Datenprofil aller Datasets (Items, Label-Verteilung, ohne-Text, Duplikate);",
+            "get_app_status" => "{\"tool\": \"get_app_status\"} — App-Status (Sessions, Runs, Modelle);",
+            "get_run_status" => "{\"tool\": \"get_run_status\"} — Sessions und ihre Runs im Detail;",
+            "propose_step_config" => "{\"tool\": \"propose_step_config\", \"step\": \"<input|preprocessing|output_settings|processing|curation>\", \"config\": {...}} — Step-Config als Vorschlag;",
+            "propose_goal" => "{\"tool\": \"propose_goal\", \"goal\": {...}} — Trainings-Ziel als Vorschlag;",
+            "handoff" => "{\"tool\": \"handoff\", \"profile\": \"<data|finetuning>\", \"reason\": \"<warum>\", \"opening\": \"<fertige Einstiegsfrage>\"} — Übergabekarte an den Nutzer;",
+            _ => continue,
+        };
+        actions_docs.push(doc.to_string());
+    }
+    if !actions_docs.is_empty() {
+        parts.push(format!("VERFÜGBARE AKTIONEN (nur diese):\n{}", actions_docs.join("\n")));
     }
 
-    // Step configs 1-6 (they are small; inline them verbatim so the model can
-    // reason about the real values, not a summary).
-    for step in CONTEXT_STEPS {
-        let path = data_dir().join("config").join(format!("{step}.json"));
-        match std::fs::read_to_string(&path) {
-            Ok(text) => parts.push(format!("CONFIG {step}:\n{}", truncate_chars(&text, 6000))),
-            Err(_) => parts.push(format!("CONFIG {step}: (fehlt)")),
+    // Context blocks per the tools the profile can act on:
+    if profile.allowed_tools.iter().any(|t| t == "get_data_profile") {
+        // Step configs 1-6 inline (small files; reason, not summarize).
+        for step in CONTEXT_STEPS {
+            let path = data_dir().join("config").join(format!("{step}.json"));
+            match std::fs::read_to_string(&path) {
+                Ok(text) => parts.push(format!("CONFIG {step}:\n{}", truncate_chars(&text, 6000))),
+                Err(_) => parts.push(format!("CONFIG {step}: (fehlt)")),
+            }
         }
+        // Datasets (names + counts only; the full profile is a tool away).
+        let datasets: Vec<Value> = state
+            .storage
+            .list_datasets()
+            .unwrap_or_default()
+            .iter()
+            .map(|d| json!({"id": d.id, "name": d.name, "source_ref": d.source_ref}))
+            .collect();
+        parts.push(format!(
+            "DATASETS (übersicht):\n{}",
+            serde_json::to_string_pretty(&datasets).unwrap_or_else(|_| "[]".into())
+        ));
     }
-
-    // Datasets (names + counts only; the full profile is a separate endpoint).
-    let datasets: Vec<Value> = state
-        .storage
-        .list_datasets()
-        .unwrap_or_default()
-        .iter()
-        .map(|d| json!({"id": d.id, "name": d.name, "source_ref": d.source_ref}))
-        .collect();
-    parts.push(format!(
-        "DATASETS (übersicht):\n{}",
-        serde_json::to_string_pretty(&datasets).unwrap_or_else(|_| "[]".into())
-    ));
+    if profile.allowed_tools.iter().any(|t| t == "get_run_status") {
+        // Run overview for the finetuning assistant (sessions + runs).
+        let sessions = state.storage.list_sessions().unwrap_or_default();
+        let runs = state.storage.list_runs(None).unwrap_or_default();
+        let summary = json!({
+            "sessions": { "count": sessions.len(),
+                "items": sessions.iter().map(|s| json!({"id": s.id, "name": s.name})).collect::<Vec<_>>() },
+            "runs": { "count": runs.len(),
+                "items": runs.iter().map(|r| json!({"id": r.id, "name": r.name, "status": format!("{:?}", r.status), "model": r.model})).collect::<Vec<_>>() },
+        });
+        parts.push(format!(
+            "RUN-STATUS (übersicht):\n{}",
+            serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "[]".into())
+        ));
+    }
 
     // Docs mirror versions (the model may reference them; full-text comes
-    // later via an explicit lookup action).
+    // later via an explicit docs_search action).
     let mut mirror = Vec::new();
     if let Ok(read) = std::fs::read_dir(docs_root()) {
         for entry in read.flatten() {

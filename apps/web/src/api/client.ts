@@ -383,10 +383,15 @@ export const api = {
       }>;
     }>("GET", "/api/assistant/data-profile"),
   assistantTurn: (
-    providerId: string,
+    profileId: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>,
     onEvent: (event: AssistantStreamEvent) => void,
-  ) => streamNdjson("/api/assistant/turn", { provider_id: providerId, messages }, onEvent),
+  ) =>
+    streamNdjson(
+      "/api/assistant/turn",
+      { provider_id: "", profile_id: profileId, messages },
+      onEvent,
+    ),
   assistantProposals: () =>
     request<{ proposals: AssistantProposal[] }>("GET", "/api/assistant/proposals"),
   assistantAcceptProposal: (id: string) =>
@@ -404,6 +409,19 @@ export const api = {
         version ? `&version=${encodeURIComponent(version)}` : ""
       }`,
     ),
+  assistantProfiles: () =>
+    request<{ profiles: AssistantProfile[] }>("GET", "/api/assistant/profiles"),
+  putAssistantProfile: (id: string, profile: AssistantProfile) =>
+    request<{ profile: AssistantProfile }>("PUT", `/api/assistant/profiles/${id}`, profile),
+  getAssistantDefault: () =>
+    request<{ default_assistant: string | null; providers: Array<{ id: string; name: string; model: string | null }> }>(
+      "GET",
+      "/api/settings/assistant-default",
+    ),
+  setAssistantDefault: (providerId: string | null) =>
+    request<{ default_assistant: string | null }>("PUT", "/api/settings/assistant-default", {
+      provider_id: providerId,
+    }),
 };
 
 export type AssistantProposal = {
@@ -424,6 +442,7 @@ export type AssistantStreamEvent =
   | { type: "round_start"; round: number }
   | { type: "tool"; tool: string; round: number; ok: boolean; query?: string }
   | { type: "thinking"; round: number; text: string }
+  | { type: "handoff"; profile: string; reason: string; opening: string }
   | { type: "proposal"; kind: string; step?: string }
   | { type: "proposals"; count: number }
   | { type: "error"; message: string }
@@ -472,3 +491,12 @@ async function streamNdjson(
     }
   }
 }
+
+export type AssistantProfile = {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  allowed_tools: string[];
+  starter_prompts: string[];
+};

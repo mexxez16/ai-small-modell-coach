@@ -4,7 +4,6 @@
 
 mod api_error;
 
-mod chat;
 
 mod providers;
 
@@ -18,7 +17,7 @@ mod routes;
 
 
 
-use axum::{routing::{delete, get, post}, Router};
+use axum::{routing::{delete, get, post, put}, Router};
 
 use state::{AppConfig, DEFAULT_PORT, PORT_SCAN_TRIES, AppState};
 
@@ -347,8 +346,6 @@ fn build_router(state: AppState) -> Router {
 
         .route("/ws/terminal", get(terminal::terminal_ws))
 
-        .route("/ws/chat", get(chat::chat_ws))
-
         .route("/ws/jobs", get(routes::ws::jobs_ws))
 
         .route("/api/settings/providers", get(routes::settings::list_providers).post(routes::settings::upsert_provider))
@@ -359,7 +356,11 @@ fn build_router(state: AppState) -> Router {
 
         .route("/api/settings/vibe", get(routes::settings::get_vibe_settings).put(routes::settings::set_vibe_model))
 
+        .route("/api/settings/assistant-default", get(routes::settings::get_assistant_default).put(routes::settings::set_assistant_default))
+
         .route("/api/assistant/status", get(routes::assistant::assistant_status))
+        .route("/api/assistant/profiles", get(routes::assistant::list_profiles))
+        .route("/api/assistant/profiles/{id}", put(routes::assistant::upsert_profile))
         .route("/api/assistant/spacy-status", get(routes::assistant::spacy_status))
         .route("/api/assistant/data-profile", get(routes::assistant::data_profile))
         .route("/api/assistant/turn", post(routes::assistant::assistant_turn))

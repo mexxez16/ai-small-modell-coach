@@ -49,6 +49,9 @@ impl Provider {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ProviderFile {
     providers: Vec<Provider>,
+    /// Optional designated default for the assistant (a provider id).
+    #[serde(default)]
+    default_assistant: Option<String>,
 }
 
 pub struct ProviderStore {
@@ -59,16 +62,26 @@ pub struct ProviderStore {
 impl ProviderStore {
     pub fn load(data_dir: &std::path::Path) -> Self {
         let path = data_dir.join("providers.json");
-        let providers = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<ProviderFile>(&bytes)
-                .map(|f| f.providers)
-                .unwrap_or_default(),
-            Err(_) => Vec::new(),
+        let file: ProviderFile = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<ProviderFile>(&bytes).unwrap_or_default(),
+            Err(_) => ProviderFile::default(),
         };
         ProviderStore {
             path,
-            inner: RwLock::new(ProviderFile { providers }),
+            inner: RwLock::new(file),
         }
+    }
+
+    /// The designated default for the assistant, if set.
+    pub fn default_assistant(&self) -> Option<String> {
+        self.inner.read().unwrap().default_assistant.clone()
+    }
+
+    /// Set or clear the assistant default (None clears).
+    pub fn set_default_assistant(&self, provider_id: Option<String>) {
+        let mut file = self.inner.write().unwrap();
+        file.default_assistant = provider_id.filter(|id| !id.is_empty());
+        self.persist(&file);
     }
 
     pub fn list(&self, mask_keys: bool) -> Vec<Provider> {
