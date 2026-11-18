@@ -106,7 +106,8 @@ function ReviewCurationBlock({
       {(reviewMode === "both" || reviewMode === "table") && (
         <>
         <h4 className="card-section-title">Review-Tabelle</h4>
-      <table className="table" style={{ marginTop: 4 }}>
+      <div className="config-panel">
+      <table className="table" style={{ marginTop: 0, marginBottom: 0 }}>
         <thead>
           <tr>
             <th>Inhalt</th>
@@ -142,11 +143,10 @@ function ReviewCurationBlock({
           )}
         </tbody>
       </table>
+      </div>
       </>
       )}
-
-      <div className="config-panel" style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <div className="config-panel" style={{ marginTop: 14 }}>        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <h4 className="card-section-title" style={{ margin: 0 }}>Sammel-Aktionen pro Label</h4>
           <button
             className="button button-primary"
@@ -1384,8 +1384,9 @@ export default function DataRuns() {
               </p>
               {detail.dataset_id && (
                 <>
-                <h4 className="card-section-title">SpaCy-Trainingsdateien (generiert bei Abruf)</h4>
-                <table className="table" style={{ marginBottom: 10 }}>
+                <h4 className="card-section-title" style={{ marginTop: 0 }}>SpaCy-Trainingsdateien (generiert bei Abruf)</h4>
+                <div className="config-panel">
+                <table className="table" style={{ marginBottom: 0 }}>
                   <thead>
                     <tr>
                       <th>spaCy-Trainingsdateien</th>
@@ -1420,6 +1421,7 @@ export default function DataRuns() {
                     </tr>
                   </tbody>
                 </table>
+                </div>
                 </>
               )}
               {(() => {
@@ -1436,7 +1438,8 @@ export default function DataRuns() {
                 return (
                   <>
                   <h4 className="card-section-title">Export-Artefakte (JSONL)</h4>
-                  <table className="table" style={{ marginBottom: 10 }}>
+                  <div className="config-panel">
+                  <table className="table" style={{ marginBottom: 0 }}>
                     <thead>
                       <tr>
                         <th>Datei</th>
@@ -1486,6 +1489,7 @@ export default function DataRuns() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                   </>
                 );
               })()}
