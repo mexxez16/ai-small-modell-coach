@@ -264,7 +264,7 @@ function StepConfigControls({
         borderRadius: "var(--radius-md)",
       }}
     >
-      <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 0 }}>
         <select
           className="select"
           defaultValue=""
