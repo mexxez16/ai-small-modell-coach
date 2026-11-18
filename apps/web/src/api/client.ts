@@ -386,10 +386,11 @@ export const api = {
     profileId: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>,
     onEvent: (event: AssistantStreamEvent) => void,
+    providerId: string = "",
   ) =>
     streamNdjson(
       "/api/assistant/turn",
-      { provider_id: "", profile_id: profileId, messages },
+      { provider_id: providerId, profile_id: profileId, messages },
       onEvent,
     ),
   assistantProposals: () =>

@@ -34,6 +34,8 @@ export default function ChatDock({
   onResizeStart: (e: React.PointerEvent) => void;
 }) {
   const [profiles, setProfiles] = useState<AssistantProfile[]>([]);
+  const [compatibleProviders, setCompatibleProviders] = useState<Array<{ id: string; name: string }>>([]);
+  const [providerId, setProviderId] = useState<string>(() => localStorage.getItem("coach.assistantProvider") ?? "");
   const [threadsByProfile, setThreadsByProfile] = useState<Record<string, ChatMessage[]>>({});
   const [activityByProfile, setActivityByProfile] = useState<Record<string, Activity[]>>({});
   const [profileId, setProfileId] = useState<string>("");
@@ -61,8 +63,12 @@ export default function ChatDock({
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api.assistantProfiles();
+      const [res, provs] = await Promise.all([
+        api.assistantProfiles(),
+        api.listProviders(),
+      ]);
       setProfiles(res.profiles);
+      setCompatibleProviders(provs.providers.filter((p) => p.kind === "openai_compatible").map((p) => ({ id: p.id, name: p.name })));
       setProfileId((current) => {
         if (current && res.profiles.some((p) => p.id === current)) return current;
         // Fall back to the previous provider-style key, then to `coach`.
@@ -106,7 +112,10 @@ export default function ChatDock({
     setActivityLines(profile, []);
     let finalReply = "";
     try {
-      await api.assistantTurn("", next.map((m) => ({ role: m.role, content: m.text })), (event: AssistantStreamEvent) => {
+      await api.assistantTurn(
+        profileId,
+        next.map((m) => ({ role: m.role, content: m.text })),
+        (event: AssistantStreamEvent) => {
         switch (event.type) {
           case "tool":
             setActivityLines(profile, (lines) => [
@@ -129,7 +138,9 @@ export default function ChatDock({
             finalReply = event.reply;
             break;
         }
-      });
+        },
+        providerId,
+      );
       setThread(profile, (prev) => [...prev, { role: "assistant", text: finalReply || "(leere Antwort)" }]);
       if (finalReply.includes("Vorschläge hinterlegt")) void refresh();
     } catch (err) {
@@ -157,10 +168,32 @@ export default function ChatDock({
       <header className="dock-header">
         <h3>Assistent</h3>
         <span className="badge" style={{ background: tint(color), color: "var(--color-text)" }}>{activeProfile?.name ?? "…"}</span>
+        <select
+          className="select"
+          aria-label="Modell-Provider"
+          title="Modell-Provider für den Assistenten"
+          value={providerId}
+          disabled={busy}
+          onChange={(event) => {
+            setProviderId(event.target.value);
+            localStorage.setItem("coach.assistantProvider", event.target.value);
+          }}
+        >
+          <option value="">Standard (Settings)</option>
+          {compatibleProviders.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         <button className="button button-ghost" onClick={onClose} aria-label="Close assistant dock">
           Hide
         </button>
       </header>
+
+      {compatibleProviders.length === 0 && (
+        <p className="stat-label" style={{ padding: "8px 12px 0", color: "var(--color-warning)" }}>
+          Kein OpenAI-kompatibler Provider vorhanden — unter Settings → General einen Provider anlegen und als Standard setzen.
+        </p>
+      )}
 
       <div className="dock-profile-tabs">
         {profiles.map((profile) => {
