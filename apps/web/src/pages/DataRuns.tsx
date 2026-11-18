@@ -532,6 +532,24 @@ export default function DataRuns() {
     setActionNote("Protokoll in die Zwischenablage kopiert.");
   };
 
+  /** Stratified train/dev split over approved items (workbench conversion). */
+  const runSplitConversion = async (devRatio: number) => {
+    if (!detail?.dataset_id) return;
+    try {
+      const res = await fetch(`/api/datasets/${detail.dataset_id}/conversions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dev_ratio: devRatio }),
+      });
+      if (!res.ok) throw new Error(`conversion failed (${res.status})`);
+      const job = (await res.json()) as { stats?: Record<string, unknown> };
+      setActionNote(`Split erzeugt: ${JSON.stringify(job.stats ?? {})}`);
+      await refresh();
+    } catch (err) {
+      setActionNote(`Split fehlgeschlagen: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
   /** Save the log server-side and open its folder in the file manager. */
   const revealLogFile = async () => {
     if (!detail) return;
@@ -1382,6 +1400,36 @@ export default function DataRuns() {
                   "wird bei der ersten Ausführung erzeugt"
                 )}
               </p>
+              {detail.dataset_id && (
+                <div className="config-panel" style={{ marginTop: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <b>Split erzeugen</b>
+                    <span className="stat-label">stratifizierte train/dev-Zuordnung über genehmigte Items</span>
+                    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      dev-Anteil
+                      <input
+                        type="number"
+                        className="input"
+                        min={0}
+                        max={0.9}
+                        step={0.05}
+                        defaultValue={0.2}
+                        style={{ width: 90 }}
+                        id="split-dev-ratio"
+                      />
+                    </label>
+                    <button
+                      className="button button-primary"
+                      onClick={() => {
+                        const ratio = Number((document.getElementById("split-dev-ratio") as HTMLInputElement)?.value ?? 0.2);
+                        void runSplitConversion(ratio);
+                      }}
+                    >
+                      Konvertierung ausführen
+                    </button>
+                  </div>
+                </div>
+              )}
               {detail.dataset_id && (
                 <>
                 <h4 className="card-section-title" style={{ marginTop: 0 }}>SpaCy-Trainingsdateien (generiert bei Abruf)</h4>
