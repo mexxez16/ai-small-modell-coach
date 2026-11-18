@@ -254,7 +254,16 @@ function StepConfigControls({
   };
 
   return (
-    <div style={{ marginBottom: 8, borderBottom: "1px solid var(--color-border)", paddingBottom: 8 }}>
+    <div
+      style={{
+        marginTop: 14,
+        marginBottom: 10,
+        padding: "var(--space-2) var(--space-3) var(--space-3)",
+        background: "color-mix(in srgb, var(--color-accent) 5%, transparent)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--radius-md)",
+      }}
+    >
       <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <select
           className="select"
