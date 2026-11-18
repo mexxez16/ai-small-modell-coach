@@ -841,3 +841,108 @@ pub async fn get_export_artifact(
         .body(axum::body::Body::from(body))
         .map_err(|e| CoreError::Serialization(serde_json::Error::io(std::io::Error::other(e))))?)
 }
+
+/// Absolute path + existence of a stored export artifact
+/// (`GET /api/datasets/{id}/export/{head}/path`).
+#[utoipa::path(get, path = "/api/datasets/{id}/export/{head}/path")]
+pub async fn get_export_artifact_path(
+    axum::extract::Path((dataset_id, head)): axum::extract::Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    let path = export_artifact_path(&dataset_id, &head);
+    Ok(Json(json!({ "path": path.display().to_string(), "exists": path.exists() })))
+}
+
+/// Write the run's stage results to a text log file and return its absolute
+/// path (`GET /api/data-runs/{id}/log-file`). Refreshed on every call so the
+/// file mirrors the stored run results.
+#[utoipa::path(get, path = "/api/data-runs/{id}/log-file")]
+pub async fn get_run_log_file(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    let run = state.storage.get_data_run(&id)?;
+    let mut text = String::new();
+    text.push_str(&format!("Run {} — {}\n", run.id, run.name));
+    text.push_str(&format!("Status: {}\n\n", run.status));
+    match &run.results {
+        Value::Object(map) => {
+            if let Some(errors) = map.get("errors").and_then(|v| v.as_array()) {
+                for e in errors {
+                    if let Some(line) = e.as_str() {
+                        text.push_str(&format!("[FEHLER] {line}\n"));
+                    }
+                }
+                text.push('\n');
+            }
+            for (key, value) in map {
+                if key == "errors" {
+                    continue;
+                }
+                text.push_str(&format!("{key} {}\n", serde_flat(value)));
+                text.push_str(&format!("{}\n\n", serde_json::to_string_pretty(value).unwrap_or_default()));
+            }
+            if !map.contains_key("errors") && !map.is_empty() {
+                text.push_str("[OK] alle Stages abgeschlossen\n");
+            }
+        }
+        other => text.push_str(&format!("{}\n", other)),
+    }
+    let dir = crate::state::resolve_data_dir().join("logs");
+    std::fs::create_dir_all(&dir).map_err(CoreError::Io)?;
+    let file = dir.join(format!("datarun-{id}.log"));
+    std::fs::write(&file, text).map_err(CoreError::Io)?;
+    Ok(Json(json!({ "path": file.display().to_string() })))
+}
+
+/// Compact one-line summary of a stage result map for the log header.
+fn serde_flat(value: &Value) -> String {
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .filter(|(k, _)| !matches!(k.as_str(), "stats" | "skipped"))
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        other => other.to_string(),
+    }
+}
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct RevealRequest {
+    pub path: String,
+}
+
+/// Open the OS file manager at the given path
+/// (`POST /api/system/reveal`). Restricted to paths inside the server's
+/// data directory so the endpoint cannot browse arbitrary folders.
+#[utoipa::path(post, path = "/api/system/reveal", request_body = RevealRequest)]
+pub async fn reveal_path(
+    Json(body): Json<RevealRequest>,
+) -> Result<Json<Value>, ApiError> {
+    use coach_core::CoreError;
+    let target = std::path::PathBuf::from(body.path.trim());
+    let resolved = target
+        .canonicalize()
+        .map_err(|e| CoreError::NotFound(format!("{} ({})", target.display(), e)))?;
+    let data_dir = crate::state::resolve_data_dir();
+    let root = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.clone());
+    if !resolved.starts_with(&root) {
+        return Err(CoreError::InvalidQuery(format!(
+            "path {} is outside the server data directory",
+            resolved.display()
+        ))
+        .into());
+    }
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("explorer").arg("/select,").arg(&resolved).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg("-R").arg(&resolved).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let folder = resolved.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| resolved.clone());
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(&folder).spawn();
+    spawned.map_err(|e| CoreError::Io(e))?;
+    Ok(Json(json!({ "revealed": resolved.display().to_string() })))
+}

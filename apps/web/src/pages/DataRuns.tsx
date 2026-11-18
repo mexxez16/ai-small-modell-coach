@@ -104,7 +104,9 @@ function ReviewCurationBlock({
       )}
 
       {(reviewMode === "both" || reviewMode === "table") && (
-      <table className="table" style={{ marginTop: 8 }}>
+        <>
+        <h4 className="card-section-title">Review-Tabelle</h4>
+      <table className="table" style={{ marginTop: 4 }}>
         <thead>
           <tr>
             <th>Inhalt</th>
@@ -140,11 +142,12 @@ function ReviewCurationBlock({
           )}
         </tbody>
       </table>
+      </>
       )}
 
-      <div style={{ marginTop: 12 }}>
+      <div className="config-panel" style={{ marginTop: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <b>Sammel-Aktionen pro Label</b>
+          <h4 className="card-section-title" style={{ margin: 0 }}>Sammel-Aktionen pro Label</h4>
           <button
             className="button button-primary"
             disabled={raw.length === 0}
@@ -254,16 +257,7 @@ function StepConfigControls({
   };
 
   return (
-    <div
-      style={{
-        marginTop: 14,
-        marginBottom: 10,
-        padding: "var(--space-2) var(--space-3) var(--space-3)",
-        background: "color-mix(in srgb, var(--color-accent) 5%, transparent)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-md)",
-      }}
-    >
+    <div className="config-panel" style={{ marginTop: 14, marginBottom: 10 }}>
       <div className="field-row" style={{ flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 0 }}>
         <select
           className="select"
@@ -519,6 +513,54 @@ export default function DataRuns() {
     setCfg((prev) => ({ ...prev, [key]: value }));
 
   const detail = useMemo(() => runs.find((r) => r.id === runId) ?? null, [runs, runId]);
+  const [actionNote, setActionNote] = useState("");
+
+  /** Plain-text rendering of the stored run results (same as the log window). */
+  const logText = (): string => {
+    const lines: string[] = [`Run ${detail?.name ?? runId} — Status: ${detail?.status ?? "?"}`];
+    if (detail?.results && typeof detail.results === "object") {
+      for (const [key, value] of Object.entries(detail.results)) {
+        lines.push(`${key} ${JSON.stringify(value)}`);
+      }
+    }
+    return lines.join("\n");
+  };
+
+  /** Copy the rendered log text. */
+  const copyLog = async () => {
+    await navigator.clipboard.writeText(logText());
+    setActionNote("Protokoll in die Zwischenablage kopiert.");
+  };
+
+  /** Save the log server-side and open its folder in the file manager. */
+  const revealLogFile = async () => {
+    if (!detail) return;
+    try {
+      const res = await fetch(`/api/data-runs/${detail.id}/log-file`);
+      const data = (await res.json()) as { path: string };
+      await fetch("/api/system/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: data.path }),
+      });
+      setActionNote(`Protokolldatei: ${data.path}`);
+    } catch {
+      setActionNote("Protokolldatei konnte nicht erzeugt/geöffnet werden.");
+    }
+  };
+
+  /** Copy the server-side log file's path. */
+  const copyLogPath = async () => {
+    if (!detail) return;
+    try {
+      const res = await fetch(`/api/data-runs/${detail.id}/log-file`);
+      const data = (await res.json()) as { path: string };
+      await navigator.clipboard.writeText(data.path);
+      setActionNote(`Pfad kopiert: ${data.path}`);
+    } catch {
+      setActionNote("Pfad konnte nicht ermittelt werden.");
+    }
+  };
 
   // Items of the run's dataset (curation view + status counts).
   const [runItems, setRunItems] = useState<Array<{
@@ -533,6 +575,33 @@ export default function DataRuns() {
       .then((rows: Array<{ id: string; text?: string; subject?: string; predicate?: string; object?: string; label: string; status: string; source: string }>) => setRunItems(rows))
       .catch(() => {});
   }, [detail?.dataset_id, detail?.updated_at, detail?.status]);
+
+  /** Resolve an artifact path server-side, then copy it to the clipboard. */
+  const copyArtifactPath = async (datasetId: string, head: string) => {
+    try {
+      const res = await fetch(`/api/datasets/${datasetId}/export/${head}/path`);
+      const data = (await res.json()) as { path: string };
+      await navigator.clipboard.writeText(data.path);
+      setActionNote(`Pfad kopiert: ${data.path}`);
+    } catch {
+      setActionNote("Pfad konnte nicht ermittelt werden.");
+    }
+  };
+
+  /** Ask the server to show the artifact folder in the OS file manager. */
+  const revealArtifact = async (datasetId: string, head: string) => {
+    try {
+      const res = await fetch(`/api/datasets/${datasetId}/export/${head}/path`);
+      const data = (await res.json()) as { path: string };
+      await fetch("/api/system/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: data.path }),
+      });
+    } catch {
+      setActionNote("Ordner konnte nicht geöffnet werden.");
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -1314,6 +1383,8 @@ export default function DataRuns() {
                 )}
               </p>
               {detail.dataset_id && (
+                <>
+                <h4 className="card-section-title">SpaCy-Trainingsdateien (generiert bei Abruf)</h4>
                 <table className="table" style={{ marginBottom: 10 }}>
                   <thead>
                     <tr>
@@ -1349,6 +1420,7 @@ export default function DataRuns() {
                     </tr>
                   </tbody>
                 </table>
+                </>
               )}
               {(() => {
                 // Collect per-head artifacts from every export stage result.
@@ -1362,6 +1434,8 @@ export default function DataRuns() {
                 }
                 if (heads.length === 0) return null;
                 return (
+                  <>
+                  <h4 className="card-section-title">Export-Artefakte (JSONL)</h4>
                   <table className="table" style={{ marginBottom: 10 }}>
                     <thead>
                       <tr>
@@ -1376,7 +1450,7 @@ export default function DataRuns() {
                           <td style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{h.head}.jsonl</td>
                           <td>{h.rows}</td>
                           <td>
-                            <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                            <div className="field-row" style={{ gap: 6, marginBottom: 0, flexWrap: "wrap" }}>
                               <a
                                 className="button"
                                 href={`/api/datasets/${h.file}`}
@@ -1392,16 +1466,40 @@ export default function DataRuns() {
                               >
                                 Download
                               </a>
+                              <button
+                                className="button button-ghost"
+                                title="Datei im Dateimanager anzeigen"
+                                onClick={() => void revealArtifact(detail.dataset_id!, h.head)}
+                              >
+                                Anzeigen
+                              </button>
+                              <button
+                                className="button button-ghost"
+                                title="Dateipfad in die Zwischenablage kopieren"
+                                onClick={() => void copyArtifactPath(detail.dataset_id!, h.head)}
+                              >
+                                Pfad
+                              </button>
                             </div>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  </>
                 );
               })()}
 
               {detail.results && Object.keys(detail.results).length > 0 ? (
+                <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                  <h4 className="card-section-title" style={{ margin: 0 }}>Ausführungs-Protokoll</h4>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button className="button button-ghost" onClick={() => void copyLog()}>Kopieren</button>
+                    <button className="button button-ghost" onClick={() => void revealLogFile()}>Als Datei öffnen</button>
+                    <button className="button button-ghost" onClick={() => void copyLogPath()}>Pfad</button>
+                  </div>
+                </div>
                 <div
                   style={{
                     marginTop: 8,
@@ -1447,8 +1545,12 @@ export default function DataRuns() {
                     <div style={{ color: "var(--color-success)" }}>[OK] alle Stages abgeschlossen</div>
                   )}
                 </div>
+                </>
               ) : (
                 <div className="empty-state">Noch nicht ausgeführt — „Speichern + Ausführen" oben.</div>
+              )}
+              {actionNote && (
+                <p className="stat-label" style={{ marginTop: 8 }}>{actionNote}</p>
               )}
             </>
           ))}
