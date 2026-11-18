@@ -877,26 +877,39 @@ fn new_proposal(kind: &str, step: Option<String>, payload: &Value) -> Proposal {
 
 /// Split a model answer into (user text, recognized actions).
 fn parse_protocol(raw: &str) -> (String, Vec<Value>) {
-    let text = strip_fence(raw);
-    if let Ok(value) = serde_json::from_str::<Value>(&text) {
+    // The strict format is the whole answer as one JSON object.
+    if let Ok(value) = serde_json::from_str::<Value>(raw.trim()) {
         if value.is_object() && value.get("text").is_some() {
             let reply = value["text"].as_str().unwrap_or("").to_string();
             let actions = value["actions"].as_array().cloned().unwrap_or_default();
             return (reply, actions);
         }
     }
-    (raw.trim().to_string(), Vec::new())
-}
-
-fn strip_fence(text: &str) -> String {
-    let trimmed = text.trim();
-    let inner = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"));
-    match inner {
-        Some(rest) => rest.strip_suffix("```").unwrap_or(rest).trim().to_string(),
-        None => trimmed.to_string(),
+    // Otherwise: salvage the first balanced {...} block that yields a
+    // "text" field (models often wrap the protocol object in prose).
+    let mut depth = 0usize;
+    let mut block_start: Option<usize> = None;
+    for (i, ch) in raw.char_indices() {
+        if ch == '{' {
+            if depth == 0 {
+                block_start = Some(i);
+            }
+            depth += 1;
+        } else if ch == '}' && depth > 0 {
+            depth -= 1;
+            if depth == 0 && block_start.is_some() {
+                let candidate = &raw[block_start.unwrap()..=i];
+                if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+                    if value.is_object() && value.get("text").is_some() {
+                        let reply = value["text"].as_str().unwrap_or("").to_string();
+                        let actions = value["actions"].as_array().cloned().unwrap_or_default();
+                        return (reply, actions);
+                    }
+                }
+            }
+        }
     }
+    (raw.trim().to_string(), Vec::new())
 }
 
 fn truncate_chars(text: &str, max: usize) -> String {
@@ -917,7 +930,12 @@ fn build_system_prompt(state: &AppState, profile: &Profile) -> String {
     parts.push(
         "VERHALTEN: Antworte im JSON-Protokoll \
          {\"text\": \"<Antwort>\", \"actions\": [...]}; schreibe nie direkt, \
-         sondern nur über Aktionen; bleib in deiner Rolle."
+         sondern nur über Aktionen; bleib in deiner Rolle.\
+         \nANTWORTFORMAT (streng): Gib AUSSCHLIESSLICH das JSON-Objekt aus — \
+         kein einleitender oder nachfolgender Text, keine Markdown-Codeblöcke, \
+         keine Kommentare. Du hast KEINEN Dateisystemzugriff: Arbeite allein \
+         mit den im Prompt enthaltenen Daten und den bereitgestellten Aktionen; \
+         versuche nie, Dateien direkt zu lesen oder Skripte auszuführen."
             .to_string(),
     );
 
@@ -1337,4 +1355,25 @@ fn newest_mirror() -> String {
     }
     versions.sort();
     versions.pop().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_protocol;
+
+    #[test]
+    fn parses_wrapped_protocol_object() {
+        let raw = "Ich analyse gerne.\n\n{\"text\":\"Antwort\",\"actions\":[{\"tool\":\"propose_step_config\",\"step\":\"output_settings\",\"config\":{\"example_types\":[\"example\"]}}]}\n\nHinweis.";
+        let (reply, actions) = parse_protocol(raw);
+        assert_eq!(reply, "Antwort");
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["tool"], "propose_step_config");
+    }
+
+    #[test]
+    fn falls_back_to_raw_without_protocol_object() {
+        let (reply, actions) = parse_protocol("Normale Antwort ohne Protokoll.");
+        assert_eq!(reply, "Normale Antwort ohne Protokoll.");
+        assert!(actions.is_empty());
+    }
 }
