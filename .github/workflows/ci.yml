@@ -34,7 +34,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install -U pip
-          python -m pip install spacy pytest httpx maturin
+          python -m pip install spacy pytest httpx maturin fastapi uvicorn
           python -m spacy download en_core_web_sm
       - name: Build abi3 wheel
         run: |

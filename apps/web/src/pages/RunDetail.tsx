@@ -23,8 +23,8 @@ function SeriesChart({
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   const { allX0, allX1, allY0, allY1 } = useMemo(() => {
-    let xs: number[] = [];
-    let ys: number[] = [];
+    const xs: number[] = [];
+    const ys: number[] = [];
     for (const s of seriesList) {
       for (const p of s.points) {
         xs.push(p.x);

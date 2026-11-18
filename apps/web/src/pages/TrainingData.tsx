@@ -123,7 +123,7 @@ export default function TrainingData({ mode = "runs" }: TrainingDataProps) {
   useEffect(() => {
     const wanted = searchParams.get("dataset");
     if (wanted) setActive(wanted);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [searchParams]);
 
   // Validation report refreshes with the dataset switch.

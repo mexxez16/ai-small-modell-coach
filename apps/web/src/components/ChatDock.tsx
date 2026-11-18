@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, AssistantProfile, AssistantStreamEvent } from "../api/client";
 
@@ -42,8 +42,8 @@ export default function ChatDock({
   const listRef = useRef<HTMLDivElement>(null);
 
   const activeProfile = profiles.find((p) => p.id === profileId);
-  const messages = threadsByProfile[profileId] ?? [];
-  const activity = activityByProfile[profileId] ?? [];
+  const messages = useMemo(() => threadsByProfile[profileId] ?? [], [threadsByProfile, profileId]);
+  const activity = useMemo(() => activityByProfile[profileId] ?? [], [activityByProfile, profileId]);
 
   const profileColor = (id: string): string => {
     if (PROFILE_TOKENS[id]) return PROFILE_TOKENS[id];
@@ -58,11 +58,6 @@ export default function ChatDock({
 
   const setActivityLines = (profile: string, lines: Activity[] | ((prev: Activity[]) => Activity[])) =>
     setActivityByProfile((all) => ({ ...all, [profile]: typeof lines === "function" ? lines(all[profile] ?? []) : lines }));
-
-  useEffect(() => {
-    if (!open) return;
-    void refresh();
-  }, [open]);
 
   const refresh = useCallback(async () => {
     try {
@@ -79,6 +74,13 @@ export default function ChatDock({
       setActivityLines(profileId, [{ kind: "line", text: err instanceof Error ? err.message : String(err) }]);
     }
   }, [profileId]);
+
+  useEffect(() => {
+    if (!open) return;
+    void refresh();
+    // Intentionally only on open; profile switches refresh explicitly below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const switchProfile = (id: string, prefill?: string) => {
     setProfileId(id);
