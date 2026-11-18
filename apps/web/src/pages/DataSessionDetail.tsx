@@ -189,17 +189,19 @@ export default function DataSessionDetail() {
                 )}
               </td>
               <td>{new Date(run.updated_at).toLocaleString()}</td>
-              <td className="field-row" style={{ gap: 6 }}>
-                <Link className="button" to={`/training-data/runs/${run.id}`}>
-                  Pipeline öffnen
-                </Link>
-                <button
-                  className="button button-primary"
-                  disabled={busy}
-                  onClick={() => void executeRun(run.id)}
-                >
-                  Ausführen
-                </button>
+              <td>
+                <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                  <Link className="button" to={`/training-data/runs/${run.id}`}>
+                    Pipeline öffnen
+                  </Link>
+                  <button
+                    className="button button-primary"
+                    disabled={busy}
+                    onClick={() => void executeRun(run.id)}
+                  >
+                    Ausführen
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

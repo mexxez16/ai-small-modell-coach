@@ -154,17 +154,19 @@ export default function DataSessions() {
                 </td>
                 <td>{runs.length}</td>
                 <td>{new Date(s.updated_at).toLocaleString()}</td>
-                <td className="field-row" style={{ gap: 6 }}>
-                  <Link className="button" to={`/training-data/sessions/${s.id}`}>
-                    Öffnen
-                  </Link>
-                  <button
-                    className="button button-ghost"
-                    onClick={() => void removeSession(s.id)}
-                    title="Session löschen (Runs bleiben erhalten)"
-                  >
-                    Löschen
-                  </button>
+                <td>
+                  <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                    <Link className="button" to={`/training-data/sessions/${s.id}`}>
+                      Öffnen
+                    </Link>
+                    <button
+                      className="button button-ghost"
+                      onClick={() => void removeSession(s.id)}
+                      title="Session löschen (Runs bleiben erhalten)"
+                    >
+                      Löschen
+                    </button>
+                  </div>
                 </td>
               </tr>
             );

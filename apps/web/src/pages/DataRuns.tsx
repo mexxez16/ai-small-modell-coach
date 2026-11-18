@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type DataRun, type DataRunStage, type DataSession, type SourceDoc } from "../api/client";
 import HelpBubble from "../components/HelpBubble";
@@ -143,32 +143,34 @@ function ReviewCurationBlock({
       )}
 
       <div style={{ marginTop: 12 }}>
-        <b>Sammel-Aktionen pro Label</b>
-        {labels.map((label) => (
-          <div key={label} className="field-row" style={{ gap: 8, marginTop: 4, display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-            <div className="field-row" style={{ gap: 8 }}>
-              <span className="stat-label" style={{ minWidth: 140 }}>
-                {label}: {raw.filter((i) => i.label === label).length} offen
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <b>Sammel-Aktionen pro Label</b>
+          <button
+            className="button button-primary"
+            disabled={raw.length === 0}
+            onClick={() => void Promise.all(labels.flatMap((label) => raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved"))))}
+          >
+            Alle Genehmigen
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 6, alignItems: "center", marginTop: 6 }}>
+          {labels.map((label) => (
+            <Fragment key={label}>
+              <span className="badge badge-neutral" style={{ justifyContent: "flex-start" }}>{label}</span>
+              <span className="stat-label" style={{ textAlign: "right" }}>
+                {raw.filter((i) => i.label === label).length} offen
               </span>
-              <button
-                className="button button-primary"
-                onClick={() =>
-                  void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")))
-                }
-              >
-                Genehmigen
-              </button>
-              <button
-                className="button"
-                onClick={() =>
-                  void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "rejected")))
-                }
-              >
-                Verwerfen
-              </button>
-            </div>
-          </div>
-        ))}
+              <span style={{ display: "flex", gap: 6 }}>
+                <button className="button button-primary" onClick={() => void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "approved")))}>
+                  Genehmigen
+                </button>
+                <button className="button" onClick={() => void Promise.all(raw.filter((i) => i.label === label).map((i) => onDecide(i.id, "rejected")))}>
+                  Verwerfen
+                </button>
+              </span>
+            </Fragment>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -288,7 +290,15 @@ function StepConfigControls({
         </button>
       </div>
       {show && (
-        <div style={{ marginTop: 6 }}>
+        <div
+          style={{
+            marginTop: 6,
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            padding: 10,
+          }}
+        >
           <textarea
             className="input"
             value={text}
@@ -992,7 +1002,8 @@ export default function DataRuns() {
                     </div>
                   </td>
                   <td>{new Date(run.updated_at).toLocaleString()}</td>
-                  <td className="field-row" style={{ gap: 6 }}>
+                  <td>
+                    <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
                     <Link className="button" to={`/training-data/runs/${run.id}`}>
                       Pipeline
                     </Link>
@@ -1002,6 +1013,7 @@ export default function DataRuns() {
                     <button className="button button-ghost" onClick={() => void deleteRun(run.id)}>
                       Löschen
                     </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1303,21 +1315,27 @@ export default function DataRuns() {
                   <tbody>
                     <tr>
                       <td>config.cfg <span className="stat-label">(Draft: textcat, labels aus Dataset, lang=de)</span></td>
-                      <td className="field-row" style={{ gap: 6 }}>
-                        <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} target="_blank" rel="noreferrer">Öffnen</a>
-                        <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} download="config.cfg">Download</a>
+                      <td>
+                        <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                          <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} target="_blank" rel="noreferrer">Öffnen</a>
+                          <a className="button" href={`/api/datasets/${detail.dataset_id}/config-cfg`} download="config.cfg">Download</a>
+                        </div>
                       </td>
                     </tr>
                     <tr>
                       <td>train.spacy <span className="stat-label">(nur train-Split — DocBin, braucht Render-Worker)</span></td>
-                      <td className="field-row" style={{ gap: 6 }}>
-                        <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=train`} download="train.spacy">Download</a>
+                      <td>
+                        <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                          <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=train`} download="train.spacy">Download</a>
+                        </div>
                       </td>
                     </tr>
                     <tr>
                       <td>dev.spacy <span className="stat-label">(nur dev-Split — DocBin, braucht Render-Worker)</span></td>
-                      <td className="field-row" style={{ gap: 6 }}>
-                        <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=dev`} download="dev.spacy">Download</a>
+                      <td>
+                        <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                          <a className="button" href={`/api/datasets/${detail.dataset_id}/export/docbin?split=dev`} download="dev.spacy">Download</a>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
@@ -1348,22 +1366,24 @@ export default function DataRuns() {
                         <tr key={`${h.file}-${i}`}>
                           <td style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{h.head}.jsonl</td>
                           <td>{h.rows}</td>
-                          <td className="field-row" style={{ gap: 6 }}>
-                            <a
-                              className="button"
-                              href={`/api/datasets/${h.file}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Öffnen
-                            </a>
-                            <a
-                              className="button button-primary"
-                              href={`/api/datasets/${h.file}`}
-                              download={`${h.head}.jsonl`}
-                            >
-                              Download
-                            </a>
+                          <td>
+                            <div className="field-row" style={{ gap: 6, marginBottom: 0 }}>
+                              <a
+                                className="button"
+                                href={`/api/datasets/${h.file}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Öffnen
+                              </a>
+                              <a
+                                className="button button-primary"
+                                href={`/api/datasets/${h.file}`}
+                                download={`${h.head}.jsonl`}
+                              >
+                                Download
+                              </a>
+                            </div>
                           </td>
                         </tr>
                       ))}
