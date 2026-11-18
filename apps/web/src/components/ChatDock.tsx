@@ -240,7 +240,7 @@ export default function ChatDock({
 
       {compatibleProviders.length === 0 && (
         <p className="stat-label" style={{ padding: "8px 12px 0", color: "var(--color-warning)" }}>
-          Kein OpenAI-kompatibler Provider vorhanden — unter Settings → General einen Provider anlegen und als Standard setzen.
+          Kein Chat-Provider vorhanden — unter Settings → General einen Provider anlegen (openai_compatible oder Mistral Vibe CLI) und als Standard setzen.
         </p>
       )}
 
