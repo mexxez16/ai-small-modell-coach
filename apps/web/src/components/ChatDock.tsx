@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, AssistantProfile, AssistantStreamEvent } from "../api/client";
+import { ChatMessage, latestSession, listSessions, newSessionId, titleFor, upsertSession } from "./chatStore";
 
-type ChatMessage = { role: "user" | "assistant"; text: string };
 type Activity = { kind: "line" | "handoff_card"; text: string; profile?: string; reason?: string; opening?: string };
 
 /** Stable per-assistant hue (design tokens) so chats are visually attributable. */
@@ -27,11 +27,14 @@ export default function ChatDock({
   onClose,
   width,
   onResizeStart,
+  demand,
 }: {
   open: boolean;
   onClose: () => void;
   width: number;
   onResizeStart: (e: React.PointerEvent) => void;
+  /** Sidebar click: open this stored session (identity of the request is `n`). */
+  demand?: { sessionId: string; n: number } | null;
 }) {
   const [profiles, setProfiles] = useState<AssistantProfile[]>([]);
   const [compatibleProviders, setCompatibleProviders] = useState<Array<{ id: string; name: string }>>([]);
@@ -39,6 +42,7 @@ export default function ChatDock({
   const [threadsByProfile, setThreadsByProfile] = useState<Record<string, ChatMessage[]>>({});
   const [activityByProfile, setActivityByProfile] = useState<Record<string, Activity[]>>({});
   const [profileId, setProfileId] = useState<string>("");
+  const [sessions, setSessions] = useState<Record<string, string>>({});
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -92,8 +96,38 @@ export default function ChatDock({
     setProfileId(id);
     localStorage.setItem("coach.assistantProfile", id);
     setActivityLines(id, []);
-    if (prefill) setInput(prefill);
+    if (prefill) {
+      // Handoff: fresh context, the opening question leads.
+      setSessions((all) => ({ ...all, [id]: newSessionId() }));
+      setThreadsByProfile((all) => ({ ...all, [id]: [] }));
+      setInput(prefill);
+      return;
+    }
+    // Otherwise continue the most recent stored session for this profile.
+    const recent = latestSession(id);
+    setSessions((all) => ({ ...all, [id]: recent?.id ?? newSessionId() }));
+    setThreadsByProfile((all) => ({ ...all, [id]: recent?.messages ?? [] }));
   };
+
+  const newChat = () => {
+    if (!profileId) return;
+    setSessions((all) => ({ ...all, [profileId]: newSessionId() }));
+    setThreadsByProfile((all) => ({ ...all, [profileId]: [] }));
+    setActivityLines(profileId, []);
+    setInput("");
+  };
+
+  /** Open a stored session picked in the sidebar CHATS section. */
+  useEffect(() => {
+    if (!demand) return;
+    const session = listSessions().find((s) => s.id === demand.sessionId);
+    if (!session) return;
+    setProfileId(session.profileId);
+    localStorage.setItem("coach.assistantProfile", session.profileId);
+    setSessions((all) => ({ ...all, [session.profileId]: session.id }));
+    setThreadsByProfile((all) => ({ ...all, [session.profileId]: session.messages }));
+    setActivityLines(session.profileId, []);
+  }, [demand]);
 
   const confirmHandoff = (card: NonNullable<Activity["kind"] extends never ? never : Activity> & { profile: string }) => {
     const target = card.profile;
@@ -106,6 +140,8 @@ export default function ChatDock({
     const profile = profileId;
     const history = threadsByProfile[profile] ?? [];
     const next = [...history, { role: "user" as const, text }];
+    const sid = sessions[profile] ?? newSessionId();
+    setSessions((all) => ({ ...all, [profile]: sid }));
     setThread(profile, next);
     setInput("");
     setBusy(true);
@@ -146,6 +182,16 @@ export default function ChatDock({
     } catch (err) {
       setActivityLines(profile, [{ kind: "line", text: err instanceof Error ? err.message : String(err) }]);
     } finally {
+      // Persist the thread (with reply when the turn produced one).
+      upsertSession({
+        id: sid,
+        profileId: profile,
+        title: titleFor(next[0]?.text ?? ""),
+        updatedAt: Date.now(),
+        messages: finalReply
+          ? [...next, { role: "assistant" as const, text: finalReply }]
+          : next,
+      });
       setBusy(false);
     }
   };
@@ -167,6 +213,9 @@ export default function ChatDock({
       />
       <header className="dock-header">
         <h3>Assistent</h3>
+        <button className="button button-ghost" onClick={newChat} title="Neuer Chat">
+          Neuer Chat
+        </button>
         <span className="badge" style={{ background: tint(color), color: "var(--color-text)" }}>{activeProfile?.name ?? "…"}</span>
         <select
           className="select"

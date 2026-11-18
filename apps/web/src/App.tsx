@@ -21,6 +21,16 @@ import Assistant from "./pages/Assistant";
 import CommandPalette from "./components/CommandPalette";
 import ChatDock from "./components/ChatDock";
 import TerminalDock from "./components/TerminalDock";
+import {
+  ChatSession,
+  CHATS_CHANGED_EVENT,
+  deleteSession,
+  domainColor,
+  listSessions,
+} from "./components/chatStore";
+
+/** Canonical profile order for the CHATS list; unknown profiles trail. */
+const PROFILE_ORDER = ["coach", "data", "finetuning"];
 
 const NAV_SECTIONS: Array<{ section: string; items: Array<{ to: string; label: string }> }> = [
   {
@@ -112,7 +122,30 @@ function usePersistedNumber(key: string, initial: number): [number, (n: number) 
   return [value, set];
 }
 
-function Sidebar() {
+function Sidebar({ onOpenChat }: { onOpenChat: (sessionId: string) => void }) {
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [now, setNow] = useState<number>(() => Date.now());
+  const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    const reload = () => {
+      setSessions(listSessions());
+      setNow(Date.now());
+    };
+    reload();
+    window.addEventListener(CHATS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(CHATS_CHANGED_EVENT, reload);
+  }, []);
+
+  const sorted = [...sessions].sort((a, b) => {
+    const orderDiff = PROFILE_ORDER.indexOf(a.profileId) - PROFILE_ORDER.indexOf(b.profileId);
+    return orderDiff !== 0 || a.profileId !== b.profileId ? orderDiff : b.updatedAt - a.updatedAt;
+  });
+  const needle = filter.trim().toLowerCase();
+  const visible = needle
+    ? sorted.filter((s) => s.title.toLowerCase().includes(needle) || s.profileId.toLowerCase().includes(needle))
+    : sorted;
+
   return (
     <nav className="sidebar" aria-label="Main navigation">
       <div className="sidebar-brand">
@@ -133,6 +166,43 @@ function Sidebar() {
           ))}
         </div>
       ))}
+      <div className="sidebar-chats">
+        <div className="sidebar-section">Chats</div>
+        <input
+          className="text-input sidebar-chat-filter"
+          placeholder="Chats filtern…"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+        />
+        {visible.length === 0 && (
+          <div className="sidebar-chat-item is-empty">
+            {sessions.length === 0 ? "Noch keine Chats." : "Kein Treffer."}
+          </div>
+        )}
+        {visible.map((session) => {
+          const dotColor = domainColor(session.profileId, PROFILE_ORDER);
+          const minutes = Math.max(0, Math.round((now - session.updatedAt) / 60000));
+          return (
+            <div key={session.id} className="sidebar-chat-item" data-profile={session.profileId}>
+              <button
+                className="sidebar-chat-open"
+                onClick={() => onOpenChat(session.id)}
+                title={`${session.profileId} · vor ${minutes < 1 ? "<1" : minutes} min`}
+              >
+                <span className="sidebar-chat-dot" style={{ background: dotColor }} />
+                <span className="sidebar-chat-title">{session.title}</span>
+              </button>
+              <button
+                className="sidebar-chat-delete"
+                aria-label={`Chat löschen: ${session.title}`}
+                onClick={() => deleteSession(session.id)}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </nav>
   );
 }
@@ -190,6 +260,8 @@ function App() {
   const [terminalOpen, toggleTerminal] = usePersistedToggle("coach.dock.terminal", false);
   const [chatWidth, setChatWidth] = usePersistedNumber(CHAT_WIDTH_KEY, 420);
   const [terminalHeight, setTerminalHeight] = usePersistedNumber(TERMINAL_HEIGHT_KEY, 300);
+  // Sidebar CHATS click: bump counter forces an effect run even for repeats.
+  const [chatDemand, setChatDemand] = useState<{ sessionId: string; n: number } | null>(null);
   const navigate = useNavigate();
 
   const startResizeChat = useCallback(
@@ -263,7 +335,12 @@ function App() {
         } as React.CSSProperties
       }
     >
-      <Sidebar />
+      <Sidebar
+        onOpenChat={(sessionId) => {
+          if (!chatOpen) toggleChat();
+          setChatDemand((d) => ({ sessionId, n: (d?.n ?? 0) + 1 }));
+        }}
+      />
       <TopBar
         onOpenPalette={() => setPaletteOpen(true)}
         theme={theme}
@@ -296,6 +373,7 @@ function App() {
         onClose={toggleChat}
         width={chatWidth}
         onResizeStart={startResizeChat}
+        demand={chatDemand}
       />
       <TerminalDock
         open={terminalOpen}
