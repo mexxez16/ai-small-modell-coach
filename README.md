@@ -7,11 +7,6 @@ visualizer in a single app, driven from a built-in AI chat and terminal.
 [![CI](https://github.com/mexxez16/ai-small-modell-coach/actions/workflows/ci.yml/badge.svg)](https://github.com/mexxez16/ai-small-modell-coach/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-cd "/home/max/Future/AI Small Modell Coach/ai-small-modell-coach"
-pkill -f coach-api          # alten Server stoppen
-cargo build -p coach-api    # Binary aktualisieren
-./target/debug/coach-api    # neu starten (Port 8901 oder Auto-Scan)
-
 ## Features
 
 ### Experiment tracking
