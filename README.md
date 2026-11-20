@@ -6,7 +6,7 @@ visualizer in a single app, driven from a built-in AI chat and terminal.
 
 <p align="center">
   <img src="images/AI%20Small%20Language%20Trainer%20Title%20Image.webp"
-       alt="AI Small Language Trainer" width="640" />
+       alt="AI Small Language Trainer" />
 </p>
 <p align="center"><em>Currently spaCy only</em></p>
 
