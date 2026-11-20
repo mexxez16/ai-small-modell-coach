@@ -4,6 +4,12 @@ A self-hosted coach for fine-tuning small NLP models (starting with spaCy) —
 an experiment tracker, a training-data curation workbench, and a displaCy
 visualizer in a single app, driven from a built-in AI chat and terminal.
 
+<p align="center">
+  <img src="images/AI%20Small%20Language%20Trainer%20Title%20Image.webp"
+       alt="AI Small Language Trainer" width="640" />
+</p>
+<p align="center"><em>Currently spaCy only</em></p>
+
 [![CI](https://github.com/mexxez16/ai-small-modell-coach/actions/workflows/ci.yml/badge.svg)](https://github.com/mexxez16/ai-small-modell-coach/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
